@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Nocturnal Forest | Three.js</title>
+  <title>Sakura Floating Island | Three.js Diorama</title>
   <style>
     /* Full-viewport reset and clean canvas presentation */
     * {
@@ -16,7 +16,7 @@
       width: 100%;
       height: 100%;
       overflow: hidden;
-      background-color: #12182b;
+      background-color: #2b1b3d;
     }
 
     #webgl-canvas {
@@ -53,26 +53,10 @@
     import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
     /**
-     * Scene Configuration Constants
-     * Twilight forest mood: elevated exposure, soft purple/blue fog, and balanced illumination.
-     */
-    const CONFIG = {
-      atmosphere: {
-        bgColor: 0x12182b,          // Soft lilac / twilight deep blue
-        fogColor: 0x1a2540,         // Lighter twilight mist
-        fogDensity: 0.015           // Less dense fog for distant visibility
-      },
-      terrain: {
-        radius: 55,
-        segments: 72,
-        color: 0x0d1410             // Dark earthy moss forest floor
-      }
-    };
-
-    /**
-     * Application Singletons & State (Three.js Engine, Particles, Postprocessing)
+     * Application Singletons & State
      */
     let scene, camera, renderer, controls, composer;
+    let islandGroup;
     let fireflyCount, fireflyGeo, fireflyData, fireflies, fireflyMat;
 
     /**
@@ -81,17 +65,17 @@
     function init() {
       const canvas = document.getElementById('webgl-canvas');
 
-      // 1. Scene & Atmosphere (Twilight fog & sky from Patch 1)
+      // 1. Scene & Sunset Gradient Atmosphere (Patch 4)
       scene = new THREE.Scene();
-      scene.background = new THREE.Color(0x12182b);
-      scene.fog = new THREE.FogExp2(0x1a2540, 0.015);
+      setupSunsetGradientBackground();
+      scene.fog = null; // Clean diorama clarity without fog occlusion
 
-      // 2. Camera Setup (Patch 3: Closer to ground level)
+      // 2. Camera Setup (Patch 4: Isometric angle overlooking the diorama)
       const aspect = window.innerWidth / window.innerHeight;
-      camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 160);
-      camera.position.set(0, 4, 25);
+      camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 180);
+      camera.position.set(25, 20, 25);
 
-      // 3. Renderer with ACES Filmic Tone Mapping, Soft Shadows & Exposure (Patch 2: 1.5)
+      // 3. Renderer with ACES Filmic Tone Mapping & Soft Shadows
       renderer = new THREE.WebGLRenderer({
         canvas,
         antialias: true,
@@ -100,35 +84,34 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.5;
+      renderer.toneMappingExposure = 1.4;
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-      // 4. OrbitControls Overview Setup (Patch 3: Target higher up the trunk)
+      // 4. OrbitControls Setup (Patch 4: Centered isometric rotation)
       controls = new OrbitControls(camera, renderer.domElement);
-      controls.target.set(0, 5, 0); // Focus into the center/canopy of the main tree
+      controls.target.set(0, 0, 0); // Focus on diorama center
       controls.autoRotate = true;
-      controls.autoRotateSpeed = 1.5;
-      controls.maxPolarAngle = Math.PI / 2 - 0.05; // Prevent dipping beneath terrain
-      controls.minDistance = 6;
-      controls.maxDistance = 60;
+      controls.autoRotateSpeed = 0.5; // Slow, majestic diorama rotation
+      controls.maxPolarAngle = Math.PI / 2.2; // Keep camera above horizon
+      controls.minDistance = 10;
+      controls.maxDistance = 75;
       controls.enableDamping = true;
       controls.dampingFactor = 0.05;
 
-      // 5. Environment & Entities
+      // 5. Build Diorama Entities
       setupLighting();
-      createTerrain();
-      createForest();
-      createForestScatter();
+      createFloatingIsland();
+      createIslandDetails();
       setupMushroomsAndFireflies();
 
-      // 6. Post-processing Pipeline: UnrealBloomPass & OutputPass (Patch 3)
+      // 6. Post-processing Pipeline: UnrealBloomPass & OutputPass (Patch 4 tuned)
       const renderScene = new RenderPass(scene, camera);
       const bloomPass = new UnrealBloomPass(
         new THREE.Vector2(window.innerWidth, window.innerHeight),
-        1.5,   // Bloom strength
+        1.2,   // Bloom strength (tuned for glowing water and sakura aura)
         0.4,   // Bloom radius
-        0.85   // Bloom threshold (only intense emitters and additive fireflies bloom)
+        0.60   // Bloom threshold (lowered so pink sakura blossoms & water catch bloom)
       );
       const outputPass = new OutputPass();
 
@@ -145,163 +128,174 @@
     }
 
     /**
-     * Lighting Setup (Patch 1):
-     * - Soft blue AmbientLight (0x5b7db1, intensity 1.5)
-     * - Bright Directional Moonlight (0xaaccff, intensity 2.5) with wide frustum shadows
-     * - Intense warm PointLight at root base (0xffaa00, intensity 4.0, distance 15)
+     * Procedural Sky Gradient:
+     * Twilight violet top transitioning through rose-magenta to warm golden sunset.
+     */
+    function setupSunsetGradientBackground() {
+      const canvas = document.createElement('canvas');
+      canvas.width = 2;
+      canvas.height = 512;
+      const ctx = canvas.getContext('2d');
+      const gradient = ctx.createLinearGradient(0, 0, 0, 512);
+      gradient.addColorStop(0, '#2b1b3d');   // Deep purple zenith
+      gradient.addColorStop(0.5, '#6b3f6b'); // Dusk rose horizon
+      gradient.addColorStop(1, '#ffaa88');   // Warm golden sunset
+      ctx.fillStyle = gradient;
+      ctx.fillRect(0, 0, 2, 512);
+
+      const bgTexture = new THREE.CanvasTexture(canvas);
+      scene.background = bgTexture;
+    }
+
+    /**
+     * Lighting Setup (Patch 4: Warm sunset palette):
+     * - Warm ambient illumination
+     * - Angled sunset DirectionalLight casting soft shadows
+     * - Bioluminescent turquoise point light beneath the island from the water ring
      */
     function setupLighting() {
-      // 1. Ambient Light (Soft blue twilight fill)
-      const ambientLight = new THREE.AmbientLight(0x5b7db1, 1.5);
+      // 1. Warm Ambient Light
+      const ambientLight = new THREE.AmbientLight(0xffccaa, 1.0);
       scene.add(ambientLight);
 
-      // 2. Directional Moonlight (Bright moon)
-      const moonLight = new THREE.DirectionalLight(0xaaccff, 2.5);
-      moonLight.position.set(20, 30, 20);
-      moonLight.castShadow = true;
-      moonLight.shadow.mapSize.width = 2048;
-      moonLight.shadow.mapSize.height = 2048;
-      moonLight.shadow.camera.near = 0.5;
-      moonLight.shadow.camera.far = 100;
-      moonLight.shadow.camera.left = -30;
-      moonLight.shadow.camera.right = 30;
-      moonLight.shadow.camera.top = 30;
-      moonLight.shadow.camera.bottom = -30;
-      scene.add(moonLight);
+      // 2. Sunset Directional Light
+      const sunsetLight = new THREE.DirectionalLight(0xffaa88, 2.0);
+      sunsetLight.position.set(-20, 15, 20);
+      sunsetLight.castShadow = true;
+      sunsetLight.shadow.mapSize.width = 2048;
+      sunsetLight.shadow.mapSize.height = 2048;
+      sunsetLight.shadow.camera.near = 0.5;
+      sunsetLight.shadow.camera.far = 80;
+      sunsetLight.shadow.camera.left = -25;
+      sunsetLight.shadow.camera.right = 25;
+      sunsetLight.shadow.camera.top = 25;
+      sunsetLight.shadow.camera.bottom = -25;
+      sunsetLight.shadow.bias = -0.0004;
+      sunsetLight.shadow.radius = 2.0;
+      scene.add(sunsetLight);
 
-      // 3. Warm PointLight at the base of the oak
-      const warmLight = new THREE.PointLight(0xffaa00, 4.0, 15);
-      warmLight.position.set(0, 1, 0);
-      warmLight.castShadow = true;
-      scene.add(warmLight);
+      // 3. Turquoise water light reflecting from underneath and through the water
+      const waterLight = new THREE.PointLight(0x00ffff, 3.0, 20);
+      waterLight.position.set(0, -2, 0);
+      scene.add(waterLight);
 
-      // Visual anchor: glowing mushroom cluster at the base
-      createLuminousMushroomCluster(new THREE.Vector3(0.4, 0.2, 0.4));
+      // 4. Subtle warm glow near central tree roots
+      const rootGlow = new THREE.PointLight(0xffaa55, 1.8, 10);
+      rootGlow.position.set(0, 1.2, 0);
+      scene.add(rootGlow);
     }
 
     /**
-     * Creates a cluster of tiny bioluminescent mushrooms at the base of the trunk
-     * to provide a delightful narrative anchor for the warm point light.
+     * Patch 4: Floating Island Construction
+     * Inverted rocky cone base, mossy green plateau top, glowing water ring, and sakura grove.
      */
-    function createLuminousMushroomCluster(basePos) {
-      const clusterGroup = new THREE.Group();
+    function createFloatingIsland() {
+      islandGroup = new THREE.Group();
 
-      const capMat = new THREE.MeshStandardMaterial({
-        color: 0xffaa22,
-        emissive: 0xff8800,
-        emissiveIntensity: 1.8,
-        roughness: 0.3,
+      // 1. Rocky Underbelly (Inverted cone with low-poly flat shading)
+      const rockGeo = new THREE.ConeGeometry(18, 12, 16);
+      rockGeo.rotateX(Math.PI); // Point downward
+      const rockMat = new THREE.MeshStandardMaterial({
+        color: 0x2a2438,
+        roughness: 0.9,
         flatShading: true
       });
+      const rockBase = new THREE.Mesh(rockGeo, rockMat);
+      rockBase.position.y = -6;
+      rockBase.receiveShadow = true;
+      rockBase.castShadow = true;
+      islandGroup.add(rockBase);
 
-      const stemMat = new THREE.MeshStandardMaterial({
-        color: 0xe0d6b8,
-        roughness: 0.8
+      // 2. Lush Grass Plateau (Top of the island)
+      const grassGeo = new THREE.CylinderGeometry(18, 18, 1, 16);
+      const grassMat = new THREE.MeshStandardMaterial({
+        color: 0x2e8b57, // Sea green lush turf
+        roughness: 0.8,
+        flatShading: true
       });
+      const grassTop = new THREE.Mesh(grassGeo, grassMat);
+      grassTop.position.y = 0;
+      grassTop.receiveShadow = true;
+      islandGroup.add(grassTop);
 
-      const mushroomOffsets = [
-        { x: 0.0,  z: 0.0,  scale: 0.16, tilt: 0.12 },
-        { x: 0.22, z: 0.12, scale: 0.12, tilt: -0.15 },
-        { x: -0.18, z: 0.18, scale: 0.14, tilt: 0.22 },
-        { x: 0.14, z: -0.18, scale: 0.10, tilt: -0.10 }
-      ];
-
-      mushroomOffsets.forEach(m => {
-        const mushroom = new THREE.Group();
-
-        // Stem
-        const stemGeo = new THREE.CylinderGeometry(0.02 * m.scale * 6, 0.035 * m.scale * 6, 0.3 * m.scale * 6, 6);
-        stemGeo.translate(0, (0.3 * m.scale * 6) / 2, 0);
-        const stem = new THREE.Mesh(stemGeo, stemMat);
-        mushroom.add(stem);
-
-        // Cap
-        const capGeo = new THREE.SphereGeometry(0.12 * m.scale * 6, 7, 5, 0, Math.PI * 2, 0, Math.PI * 0.55);
-        capGeo.translate(0, 0.3 * m.scale * 6, 0);
-        const cap = new THREE.Mesh(capGeo, capMat);
-        mushroom.add(cap);
-
-        mushroom.position.set(basePos.x + m.x, 0.02, basePos.z + m.z);
-        mushroom.rotation.z = m.tilt;
-        clusterGroup.add(mushroom);
+      // 3. Luminous Turquoise Water Ring (Along island edge)
+      const waterGeo = new THREE.RingGeometry(14, 17.5, 32);
+      const waterMat = new THREE.MeshStandardMaterial({
+        color: 0x00ffff,
+        emissive: 0x00aaff,
+        emissiveIntensity: 2.0,
+        transparent: true,
+        opacity: 0.75,
+        side: THREE.DoubleSide
       });
+      const waterRing = new THREE.Mesh(waterGeo, waterMat);
+      waterRing.rotation.x = -Math.PI / 2;
+      waterRing.position.y = 0.51; // Sits slightly above grass rim
+      islandGroup.add(waterRing);
 
-      scene.add(clusterGroup);
-    }
+      // 4. Centerpiece Blooming Sakura Tree (Scale: 1.8)
+      const mainSakura = createSakuraTree(1.8);
+      mainSakura.position.set(0, 0.5, 0);
+      islandGroup.add(mainSakura);
 
-    /**
-     * Terrain Construction:
-     * Large circular ground mesh with gentle organic undulations.
-     */
-    function createTerrain() {
-      const geometry = new THREE.CircleGeometry(
-        CONFIG.terrain.radius,
-        CONFIG.terrain.segments
-      );
-      geometry.rotateX(-Math.PI / 2);
+      // 5. Grove of 12 Secondary Sakura Trees inside the island perimeter
+      for (let i = 0; i < 12; i++) {
+        const treeScale = 0.75 + Math.random() * 0.5;
+        const tree = createSakuraTree(treeScale);
+        const angle = Math.random() * Math.PI * 2;
+        const radius = 4.5 + Math.random() * 8.5; // Confined strictly within island turf
 
-      const pos = geometry.attributes.position;
-      const v = new THREE.Vector3();
-
-      for (let i = 0; i < pos.count; i++) {
-        v.fromBufferAttribute(pos, i);
-        const dist = Math.sqrt(v.x * v.x + v.z * v.z);
-
-        // Keep root area stable, add subtle rolling elevations further away
-        if (dist > 3.0) {
-          const wave1 = Math.sin(v.x * 0.14) * Math.cos(v.z * 0.14) * 0.4;
-          const wave2 = Math.cos(v.x * 0.07 + 1.2) * Math.sin(v.z * 0.07) * 0.3;
-          v.y += wave1 + wave2;
-        }
-        pos.setXYZ(i, v.x, v.y, v.z);
+        tree.position.set(Math.cos(angle) * radius, 0.5, Math.sin(angle) * radius);
+        tree.rotation.y = Math.random() * Math.PI * 2;
+        islandGroup.add(tree);
       }
-      geometry.computeVertexNormals();
 
-      const material = new THREE.MeshStandardMaterial({
-        color: CONFIG.terrain.color,
-        roughness: 0.95,
-        metalness: 0.02,
-        flatShading: true
-      });
-
-      const terrain = new THREE.Mesh(geometry, material);
-      terrain.receiveShadow = true;
-      terrain.position.y = -0.05;
-      scene.add(terrain);
+      scene.add(islandGroup);
     }
 
     /**
-     * Patch 3: High Tree Generator
-     * Tall, slender tapered trunk with multi-layered icosahedral foliage clusters.
+     * Patch 4: Sakura Tree Generator
+     * Stylized organic trunk with curved inclination and blossoming pink canopies.
      */
-    function createTree(scale = 1) {
+    function createSakuraTree(scale = 1) {
       const treeGroup = new THREE.Group();
 
-      // Trunk (tall, tapered upward)
-      const trunkHeight = 8 * scale;
-      const trunkGeo = new THREE.CylinderGeometry(0.4 * scale, 1.2 * scale, trunkHeight, 7);
-      const trunkMat = new THREE.MeshStandardMaterial({ color: 0x2c1e16, roughness: 0.9 });
+      // Slender curved trunk
+      const trunkHeight = 6 * scale;
+      const trunkGeo = new THREE.CylinderGeometry(0.3 * scale, 0.8 * scale, trunkHeight, 6);
+      const trunkMat = new THREE.MeshStandardMaterial({
+        color: 0x4a2c2a,
+        roughness: 0.8,
+        flatShading: true
+      });
       const trunk = new THREE.Mesh(trunkGeo, trunkMat);
       trunk.position.y = trunkHeight / 2;
+      trunk.rotation.z = (Math.random() - 0.5) * 0.22;
+      trunk.rotation.x = (Math.random() - 0.5) * 0.15;
       trunk.castShadow = true;
       trunk.receiveShadow = true;
       treeGroup.add(trunk);
 
-      // Canopy & foliage clusters (multiple icosahedrons at varying heights)
-      const leafMat = new THREE.MeshStandardMaterial({ color: 0x1a3b2b, roughness: 0.8, flatShading: true });
-      const numLeafClusters = 5 + Math.floor(Math.random() * 4);
+      // Blooming pink cherry blossom foliage clusters
+      const leafMat = new THREE.MeshStandardMaterial({
+        color: 0xffb7c5,          // Delicate cherry blossom pink
+        roughness: 0.6,
+        flatShading: true,
+        emissive: 0x331122,       // Subtle warm internal glow for bloom catching
+        emissiveIntensity: 0.3
+      });
 
+      const numLeafClusters = 6 + Math.floor(Math.random() * 4);
       for (let i = 0; i < numLeafClusters; i++) {
-        const leafGeo = new THREE.IcosahedronGeometry((1.5 + Math.random() * 1.5) * scale, 1);
+        const leafGeo = new THREE.IcosahedronGeometry((1.2 + Math.random() * 1.2) * scale, 1);
         const leaves = new THREE.Mesh(leafGeo, leafMat);
 
-        // Distribute canopy around the upper trunk
         const angle = (i / numLeafClusters) * Math.PI * 2 + Math.random();
-        const dist = Math.random() * 2.5 * scale;
+        const dist = Math.random() * 2 * scale;
 
         leaves.position.set(
           Math.cos(angle) * dist,
-          trunkHeight - (Math.random() * 3 * scale),
+          trunkHeight - (Math.random() * 2.5 * scale),
           Math.sin(angle) * dist
         );
         leaves.castShadow = true;
@@ -313,174 +307,71 @@
     }
 
     /**
-     * Patch 3: Deep Forest Assembly
-     * Prominent central main tree and 30 surrounding tall trees on an expanded perimeter.
+     * Island Ground Details: Weathered low-poly stones and grass tufts on the island plateau
      */
-    function createForest() {
-      const forestGroup = new THREE.Group();
-
-      // Main centerpiece tree in the clearing (scale 1.8)
-      const mainTree = createTree(1.8);
-      mainTree.position.set(0, 0, 0);
-      forestGroup.add(mainTree);
-
-      // Surrounding forest trees (expanded ring from radius 15 to 40)
-      for (let i = 0; i < 30; i++) {
-        const tree = createTree(0.8 + Math.random() * 0.7);
-        const angle = Math.random() * Math.PI * 2;
-        const radius = 15 + Math.random() * 25;
-
-        tree.position.set(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
-        tree.rotation.y = Math.random() * Math.PI * 2;
-        forestGroup.add(tree);
-      }
-
-      scene.add(forestGroup);
-    }
-
-    /**
-     * Forest Scatter:
-     * Widely distributes low-poly rocks, dense bushes (dark green spheres),
-     * and wild grass tufts across the entire terrain.
-     */
-    function createForestScatter() {
-      // 1. Weathered Stones & Boulders across the entire clearing
+    function createIslandDetails() {
+      // 1. Stones scattered across the island grass
       const rockMaterial = new THREE.MeshStandardMaterial({
-        color: 0x2e353c,
+        color: 0x353040,
         roughness: 0.9,
-        metalness: 0.08,
         flatShading: true
       });
 
-      const totalRocks = 65;
-      for (let i = 0; i < totalRocks; i++) {
-        const radius = 0.22 + Math.random() * 0.65;
+      const rockCount = 28;
+      for (let i = 0; i < rockCount; i++) {
+        const radius = 0.2 + Math.random() * 0.5;
         const rockGeo = new THREE.DodecahedronGeometry(radius, 0);
-
-        // Distort geometry for non-uniform natural rock profiles
-        const pos = rockGeo.attributes.position;
-        const v = new THREE.Vector3();
-        const scaleX = 0.8 + Math.random() * 0.6;
-        const scaleY = 0.4 + Math.random() * 0.45;
-        const scaleZ = 0.8 + Math.random() * 0.6;
-
-        for (let j = 0; j < pos.count; j++) {
-          v.fromBufferAttribute(pos, j);
-          v.x *= scaleX;
-          v.y *= scaleY;
-          v.z *= scaleZ;
-          pos.setXYZ(j, v.x, v.y, v.z);
-        }
-        rockGeo.computeVertexNormals();
-
         const rock = new THREE.Mesh(rockGeo, rockMaterial);
 
-        // Scatter across radius 1.5 to 34
-        const dist = 1.5 + Math.random() * 32.5;
         const angle = Math.random() * Math.PI * 2;
+        const dist = 1.5 + Math.random() * 12.0;
 
         rock.position.set(
           Math.cos(angle) * dist,
-          radius * scaleY * 0.5,
+          0.5 + radius * 0.3,
           Math.sin(angle) * dist
         );
-
-        rock.rotation.set(
-          Math.random() * Math.PI,
-          Math.random() * Math.PI,
-          Math.random() * Math.PI
-        );
-
+        rock.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, Math.random() * Math.PI);
         rock.castShadow = true;
         rock.receiveShadow = true;
-        scene.add(rock);
+        islandGroup.add(rock);
       }
 
-      // 2. Forest Undergrowth Bushes (Dark green low-poly spheres)
-      const bushColors = [0x0d2115, 0x11281a, 0x163321];
-      const totalBushes = 50;
-
-      for (let i = 0; i < totalBushes; i++) {
-        const bushRadius = 0.45 + Math.random() * 0.75;
-        const bushGeo = new THREE.IcosahedronGeometry(bushRadius, 1);
-
-        // Flatten vertically and add organic deformation
-        const pos = bushGeo.attributes.position;
-        const v = new THREE.Vector3();
-        for (let j = 0; j < pos.count; j++) {
-          v.fromBufferAttribute(pos, j);
-          v.y *= 0.65;
-          v.multiplyScalar(1.0 + (Math.sin(v.x * 4.0) * 0.1));
-          pos.setXYZ(j, v.x, v.y, v.z);
-        }
-        bushGeo.computeVertexNormals();
-
-        const bushMat = new THREE.MeshStandardMaterial({
-          color: bushColors[i % bushColors.length],
-          roughness: 0.9,
-          flatShading: true
-        });
-
-        const bush = new THREE.Mesh(bushGeo, bushMat);
-
-        // Scatter across forest grounds
-        const dist = 2.5 + Math.random() * 31.5;
-        const angle = Math.random() * Math.PI * 2;
-
-        bush.position.set(
-          Math.cos(angle) * dist,
-          bushRadius * 0.5,
-          Math.sin(angle) * dist
-        );
-        bush.rotation.y = Math.random() * Math.PI * 2;
-
-        bush.castShadow = true;
-        bush.receiveShadow = true;
-        scene.add(bush);
-      }
-
-      // 3. Wild Grass Tufts
+      // 2. Wild Grass Tufts on island
       const grassBladeMat = new THREE.MeshStandardMaterial({
-        color: 0x162c1d,
-        roughness: 0.85,
+        color: 0x3aa56d,
+        roughness: 0.8,
         side: THREE.DoubleSide,
         flatShading: true
       });
 
-      const tuftCount = 80;
+      const tuftCount = 35;
       for (let i = 0; i < tuftCount; i++) {
         const tuft = new THREE.Group();
         const blades = 3 + Math.floor(Math.random() * 3);
-        const tuftHeight = 0.45 + Math.random() * 0.45;
-        const tuftWidth = 0.12 + Math.random() * 0.08;
+        const tuftHeight = 0.35 + Math.random() * 0.35;
+        const tuftWidth = 0.1 + Math.random() * 0.06;
 
         for (let b = 0; b < blades; b++) {
           const bladeGeo = new THREE.PlaneGeometry(tuftWidth, tuftHeight);
           bladeGeo.translate(0, tuftHeight / 2, 0);
 
           const blade = new THREE.Mesh(bladeGeo, grassBladeMat);
-          blade.rotation.y = (b / blades) * Math.PI + (Math.random() * 0.2);
-          blade.rotation.x = (Math.random() - 0.5) * 0.25;
-          blade.rotation.z = (Math.random() - 0.5) * 0.25;
+          blade.rotation.y = (b / blades) * Math.PI;
+          blade.rotation.x = (Math.random() - 0.5) * 0.2;
           blade.castShadow = true;
           tuft.add(blade);
         }
 
-        const dist = 1.8 + Math.random() * 26.0;
+        const dist = 1.8 + Math.random() * 11.5;
         const angle = Math.random() * Math.PI * 2;
-
-        tuft.position.set(
-          Math.cos(angle) * dist,
-          0,
-          Math.sin(angle) * dist
-        );
-
-        scene.add(tuft);
+        tuft.position.set(Math.cos(angle) * dist, 0.5, Math.sin(angle) * dist);
+        islandGroup.add(tuft);
       }
     }
 
     /**
-     * Patch 2: Glow Texture Generation for Particles
+     * Glow Texture Generator for Additive Particles
      */
     function createGlowTexture() {
       const canvas = document.createElement('canvas');
@@ -489,7 +380,7 @@
       const context = canvas.getContext('2d');
       const gradient = context.createRadialGradient(32, 32, 0, 32, 32, 32);
       gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
-      gradient.addColorStop(0.2, 'rgba(200, 255, 150, 0.8)');
+      gradient.addColorStop(0.25, 'rgba(255, 220, 180, 0.85)');
       gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
       context.fillStyle = gradient;
       context.fillRect(0, 0, 64, 64);
@@ -497,10 +388,10 @@
     }
 
     /**
-     * Patch 2: Bioluminescent Mushrooms & Firefly Particle System Setup
+     * Bioluminescent Mushrooms & Fireflies (Constrained to Floating Island Volume)
      */
     function setupMushroomsAndFireflies() {
-      // 1. Bioluminescent Mushrooms around roots
+      // 1. Bioluminescent Cyan Mushrooms clustered near the main sakura roots
       const mushroomGroup = new THREE.Group();
       const mushroomMat = new THREE.MeshStandardMaterial({
         color: 0x00ffcc,
@@ -515,26 +406,24 @@
 
       for (let i = 0; i < 15; i++) {
         const mush = new THREE.Group();
-        // Stem
-        const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.08, 0.3, 6), mushroomStemMat);
-        stem.position.y = 0.15;
-        // Cap
-        const cap = new THREE.Mesh(new THREE.SphereGeometry(0.15, 6, 4, 0, Math.PI * 2, 0, Math.PI / 2), mushroomMat);
-        cap.position.y = 0.3;
+        const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.07, 0.28, 6), mushroomStemMat);
+        stem.position.y = 0.14;
+
+        const cap = new THREE.Mesh(new THREE.SphereGeometry(0.14, 6, 4, 0, Math.PI * 2, 0, Math.PI / 2), mushroomMat);
+        cap.position.y = 0.28;
 
         mush.add(stem);
         mush.add(cap);
 
-        // Distribute around central tree (radius 2 to 5)
         const angle = Math.random() * Math.PI * 2;
-        const radius = 2 + Math.random() * 3;
-        mush.position.set(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
+        const radius = 1.5 + Math.random() * 3.5;
+        mush.position.set(Math.cos(angle) * radius, 0.5, Math.sin(angle) * radius);
         mush.rotation.y = Math.random() * Math.PI;
         mushroomGroup.add(mush);
       }
-      scene.add(mushroomGroup);
+      islandGroup.add(mushroomGroup);
 
-      // 2. Firefly Particle System (Patch 3: 300 multi-colored pulsating particles)
+      // 2. Firefly Particle System (300 particles floating over the island plateau)
       fireflyCount = 300;
       fireflyGeo = new THREE.BufferGeometry();
       const fireflyPositions = new Float32Array(fireflyCount * 3);
@@ -542,23 +431,23 @@
       fireflyData = [];
 
       for (let i = 0; i < fireflyCount; i++) {
-        // Distribute across a broad forest radius (up to 25 units)
+        // Confined across island radius (up to 15.5 units)
         const angle = Math.random() * Math.PI * 2;
-        const radius = Math.random() * 25;
+        const radius = Math.random() * 15.5;
         const x = Math.cos(angle) * radius;
         const z = Math.sin(angle) * radius;
-        const y = Math.random() * 7 + 0.5;
+        const y = 0.8 + Math.random() * 7.5; // Hovering above island turf
 
         fireflyPositions[i * 3] = x;
         fireflyPositions[i * 3 + 1] = y;
         fireflyPositions[i * 3 + 2] = z;
 
-        // Vivid spectrum: green, golden-yellow, soft cyan
-        const color = new THREE.Color().setHSL(
-          0.2 + Math.random() * 0.2, // Hue (green-yellow-cyan spectrum)
-          1.0,                       // Saturation
-          0.6                        // Lightness
-        );
+        // Vivid glowing spectrum (golden-amber, soft rose, fairy cyan)
+        const hue = (Math.random() < 0.4)
+          ? 0.92 + Math.random() * 0.08  // Rose / pink
+          : 0.12 + Math.random() * 0.25; // Warm gold to cyan
+        const color = new THREE.Color().setHSL(hue, 1.0, 0.65);
+
         fireflyColors[i * 3] = color.r;
         fireflyColors[i * 3 + 1] = color.g;
         fireflyColors[i * 3 + 2] = color.b;
@@ -575,7 +464,7 @@
       fireflyGeo.setAttribute('color', new THREE.BufferAttribute(fireflyColors, 3));
 
       fireflyMat = new THREE.PointsMaterial({
-        size: 1.2,
+        size: 1.25,
         map: createGlowTexture(),
         vertexColors: true,
         transparent: true,
@@ -600,29 +489,28 @@
       renderer.setSize(width, height);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 
-      // Resize postprocessing composer buffers
       if (composer) {
         composer.setSize(width, height);
       }
     }
 
     /**
-     * Main Animation & Render Loop (EffectComposer with UnrealBloomPass)
+     * Main Animation Loop
      */
     function animate() {
       requestAnimationFrame(animate);
 
-      // Continuously update camera orbit rotation and damping
+      // Smooth camera orbit
       controls.update();
 
       const time = Date.now() * 0.001;
 
-      // Pulse fireflies glow opacity (Patch 3)
+      // Pulse fireflies glow
       if (fireflyMat) {
         fireflyMat.opacity = 0.6 + Math.sin(time * 3) * 0.4;
       }
 
-      // Animate fireflies wandering smoothly with harmonic wave functions
+      // Harmonic kinematic firefly drift (kept over the floating island)
       if (fireflies && fireflyData && fireflyData.length) {
         const positions = fireflies.geometry.attributes.position.array;
 
@@ -630,22 +518,24 @@
           const data = fireflyData[i];
           const i3 = i * 3;
 
-          // Smooth harmonic wandering
           positions[i3] += Math.sin(time * data.speed + data.phaseX) * 0.02;
           positions[i3 + 1] += Math.cos(time * data.speed * 0.8 + data.phaseY) * 0.02;
           positions[i3 + 2] += Math.sin(time * data.speed * 1.2 + data.phaseZ) * 0.02;
 
-          // Soft boundary containment towards the center
-          if (Math.abs(positions[i3]) > 25) positions[i3] *= 0.99;
-          if (Math.abs(positions[i3 + 2]) > 25) positions[i3 + 2] *= 0.99;
-          if (positions[i3 + 1] > 12) positions[i3 + 1] *= 0.99;
-          if (positions[i3 + 1] < 0.5) positions[i3 + 1] = 0.5 + Math.random();
+          // Boundary containment: keep over the floating island (radius 16)
+          const distXZ = Math.sqrt(positions[i3] * positions[i3] + positions[i3 + 2] * positions[i3 + 2]);
+          if (distXZ > 16.0) {
+            positions[i3] *= 0.985;
+            positions[i3 + 2] *= 0.985;
+          }
+          if (positions[i3 + 1] > 10.0) positions[i3 + 1] *= 0.99;
+          if (positions[i3 + 1] < 0.6) positions[i3 + 1] = 0.6 + Math.random();
         }
 
         fireflies.geometry.attributes.position.needsUpdate = true;
       }
 
-      // Render through postprocessing pipeline
+      // Render through Bloom Post-processing
       if (composer) {
         composer.render();
       } else {
