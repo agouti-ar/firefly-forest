@@ -4,6 +4,13 @@ A real-time, zero-dependency 3D nocturnal forest environment built with Three.js
 
 ---
 
+## Live Demo
+
+Experience the interactive real-time 3D scene directly in your browser:  
+**[https://agouti-ar.github.io/firefly-forest/](https://agouti-ar.github.io/firefly-forest/)**
+
+---
+
 ## Overview
 
 Firefly Forest is designed as a standalone, modular Three.js experiment. It leverages modern ES modules and native browser import maps to deliver a rich WebGL experience directly in any standard web browser without requiring bundling, transpilations, or external build toolchains.
@@ -80,7 +87,6 @@ npx serve .
 
 ```
 firefly-forest/
-├── .gitignore       # Repository ignore rules
 ├── index.html       # Self-contained WebGL scene, lighting, geometry, and shaders
 └── README.md        # Technical documentation and project overview
 ```
