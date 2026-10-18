@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nocturnal Forest | Three.js</title>
+  <style>
+    /* Full-viewport reset and clean canvas presentation */
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body, html {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background-color: #12182b;
+    }
+
+    #webgl-canvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100vh;
+      display: block;
+      outline: none;
+    }
+  </style>
+
+  <!-- Three.js & OrbitControls via CDN Import Map -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+  <!-- Clean, full-screen WebGL viewport without UI overlay -->
+  <canvas id="webgl-canvas"></canvas>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    /**
+     * Scene Configuration Constants
+     * Twilight forest mood: elevated exposure, soft purple/blue fog, and balanced illumination.
+     */
+    const CONFIG = {
+      atmosphere: {
+        bgColor: 0x12182b,          // Soft lilac / twilight deep blue
+        fogColor: 0x1a2540,         // Lighter twilight mist
+        fogDensity: 0.015           // Less dense fog for distant visibility
+      },
+      tree: {
+        trunkColor: 0x221711,       // Weathered dark oak bark
+        foliageColors: [
+          0x0c1e13,                 // Nocturnal forest shadow green
+          0x122a1b,                 // Deep mossy green
+          0x183624,                 // Mid-tone pine green
+          0x1d402b                  // Highlighted foliage edge
+        ]
+      },
+      terrain: {
+        radius: 55,
+        segments: 72,
+        color: 0x0d1410             // Dark earthy moss forest floor
+      },
+      forest: {
+        secondaryTreeCount: 18,     // Surrounding trees in forest
+        minRadius: 8,               // Minimum distance from center
+        maxRadius: 25,              // Maximum distance from center
+        minScale: 0.5,
+        maxScale: 1.2
+      }
+    };
+
+    /**
+     * Application Singletons
+     */
+    let scene, camera, renderer, controls;
+
+    /**
+     * Entry Point: Initialize WebGL environment, lighting, geometry, and controls
+     */
+    function init() {
+      const canvas = document.getElementById('webgl-canvas');
+
+      // 1. Scene & Atmosphere (Twilight fog & sky from Patch 1)
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x12182b);
+      scene.fog = new THREE.FogExp2(0x1a2540, 0.015);
+
+      // 2. Camera Setup (Elevated and pulled back for wider overview)
+      const aspect = window.innerWidth / window.innerHeight;
+      camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 160);
+      camera.position.set(0, 15, 35);
+
+      // 3. Renderer with ACES Filmic Tone Mapping, Soft Shadows & Exposure (Patch 1)
+      renderer = new THREE.WebGLRenderer({
+        canvas,
+        antialias: true,
+        powerPreference: 'high-performance'
+      });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.2;
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+      // 4. OrbitControls Overview Setup (Patch 1)
+      controls = new OrbitControls(camera, renderer.domElement);
+      controls.target.set(0, 2, 0); // Focus on tree trunk
+      controls.autoRotate = true;
+      controls.autoRotateSpeed = 1.5;
+      controls.maxPolarAngle = Math.PI / 2 - 0.05; // Prevent dipping beneath terrain
+      controls.minDistance = 10;
+      controls.maxDistance = 60;
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.05;
+
+      // 5. Environment & Entities
+      setupLighting();
+      createTerrain();
+      createForest();
+      createForestScatter();
+
+      // 6. Responsive Resize Handling
+      window.addEventListener('resize', onWindowResize, false);
+
+      // 7. Start Render Loop
+      animate();
+    }
+
+    /**
+     * Lighting Setup (Patch 1):
+     * - Soft blue AmbientLight (0x5b7db1, intensity 1.5)
+     * - Bright Directional Moonlight (0xaaccff, intensity 2.5) with wide frustum shadows
+     * - Intense warm PointLight at root base (0xffaa00, intensity 4.0, distance 15)
+     */
+    function setupLighting() {
+      // 1. Ambient Light (Soft blue twilight fill)
+      const ambientLight = new THREE.AmbientLight(0x5b7db1, 1.5);
+      scene.add(ambientLight);
+
+      // 2. Directional Moonlight (Bright moon)
+      const moonLight = new THREE.DirectionalLight(0xaaccff, 2.5);
+      moonLight.position.set(20, 30, 20);
+      moonLight.castShadow = true;
+      moonLight.shadow.mapSize.width = 2048;
+      moonLight.shadow.mapSize.height = 2048;
+      moonLight.shadow.camera.near = 0.5;
+      moonLight.shadow.camera.far = 100;
+      moonLight.shadow.camera.left = -30;
+      moonLight.shadow.camera.right = 30;
+      moonLight.shadow.camera.top = 30;
+      moonLight.shadow.camera.bottom = -30;
+      scene.add(moonLight);
+
+      // 3. Warm PointLight at the base of the oak
+      const warmLight = new THREE.PointLight(0xffaa00, 4.0, 15);
+      warmLight.position.set(0, 1, 0);
+      warmLight.castShadow = true;
+      scene.add(warmLight);
+
+      // Visual anchor: glowing mushroom cluster at the base
+      createLuminousMushroomCluster(new THREE.Vector3(0.4, 0.2, 0.4));
+    }
+
+    /**
+     * Creates a cluster of tiny bioluminescent mushrooms at the base of the trunk
+     * to provide a delightful narrative anchor for the warm point light.
+     */
+    function createLuminousMushroomCluster(basePos) {
+      const clusterGroup = new THREE.Group();
+
+      const capMat = new THREE.MeshStandardMaterial({
+        color: 0xffaa22,
+        emissive: 0xff8800,
+        emissiveIntensity: 1.8,
+        roughness: 0.3,
+        flatShading: true
+      });
+
+      const stemMat = new THREE.MeshStandardMaterial({
+        color: 0xe0d6b8,
+        roughness: 0.8
+      });
+
+      const mushroomOffsets = [
+        { x: 0.0,  z: 0.0,  scale: 0.16, tilt: 0.12 },
+        { x: 0.22, z: 0.12, scale: 0.12, tilt: -0.15 },
+        { x: -0.18, z: 0.18, scale: 0.14, tilt: 0.22 },
+        { x: 0.14, z: -0.18, scale: 0.10, tilt: -0.10 }
+      ];
+
+      mushroomOffsets.forEach(m => {
+        const mushroom = new THREE.Group();
+
+        // Stem
+        const stemGeo = new THREE.CylinderGeometry(0.02 * m.scale * 6, 0.035 * m.scale * 6, 0.3 * m.scale * 6, 6);
+        stemGeo.translate(0, (0.3 * m.scale * 6) / 2, 0);
+        const stem = new THREE.Mesh(stemGeo, stemMat);
+        mushroom.add(stem);
+
+        // Cap
+        const capGeo = new THREE.SphereGeometry(0.12 * m.scale * 6, 7, 5, 0, Math.PI * 2, 0, Math.PI * 0.55);
+        capGeo.translate(0, 0.3 * m.scale * 6, 0);
+        const cap = new THREE.Mesh(capGeo, capMat);
+        mushroom.add(cap);
+
+        mushroom.position.set(basePos.x + m.x, 0.02, basePos.z + m.z);
+        mushroom.rotation.z = m.tilt;
+        clusterGroup.add(mushroom);
+      });
+
+      scene.add(clusterGroup);
+    }
+
+    /**
+     * Terrain Construction:
+     * Large circular ground mesh with gentle organic undulations.
+     */
+    function createTerrain() {
+      const geometry = new THREE.CircleGeometry(
+        CONFIG.terrain.radius,
+        CONFIG.terrain.segments
+      );
+      geometry.rotateX(-Math.PI / 2);
+
+      const pos = geometry.attributes.position;
+      const v = new THREE.Vector3();
+
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i);
+        const dist = Math.sqrt(v.x * v.x + v.z * v.z);
+
+        // Keep root area stable, add subtle rolling elevations further away
+        if (dist > 3.0) {
+          const wave1 = Math.sin(v.x * 0.14) * Math.cos(v.z * 0.14) * 0.4;
+          const wave2 = Math.cos(v.x * 0.07 + 1.2) * Math.sin(v.z * 0.07) * 0.3;
+          v.y += wave1 + wave2;
+        }
+        pos.setXYZ(i, v.x, v.y, v.z);
+      }
+      geometry.computeVertexNormals();
+
+      const material = new THREE.MeshStandardMaterial({
+        color: CONFIG.terrain.color,
+        roughness: 0.95,
+        metalness: 0.02,
+        flatShading: true
+      });
+
+      const terrain = new THREE.Mesh(geometry, material);
+      terrain.receiveShadow = true;
+      terrain.position.y = -0.05;
+      scene.add(terrain);
+    }
+
+    /**
+     * Procedural Tree Generator:
+     * Builds a detailed ancient oak mesh hierarchy (trunk, roots, branches, foliage clusters).
+     */
+    function buildOakModel() {
+      const treeGroup = new THREE.Group();
+
+      const barkMat = new THREE.MeshStandardMaterial({
+        color: CONFIG.tree.trunkColor,
+        roughness: 0.92,
+        metalness: 0.05,
+        flatShading: true
+      });
+
+      // 1. Lower Trunk
+      const trunkLowerGeo = new THREE.CylinderGeometry(1.3, 1.9, 3.8, 10, 3);
+      trunkLowerGeo.translate(0, 1.9, 0);
+      const trunkLower = new THREE.Mesh(trunkLowerGeo, barkMat);
+      trunkLower.castShadow = true;
+      trunkLower.receiveShadow = true;
+      treeGroup.add(trunkLower);
+
+      // 2. Upper Trunk with natural lean
+      const trunkUpperGeo = new THREE.CylinderGeometry(0.95, 1.3, 3.2, 9, 3);
+      trunkUpperGeo.translate(0, 1.6, 0);
+      const trunkUpper = new THREE.Mesh(trunkUpperGeo, barkMat);
+      trunkUpper.position.set(0, 3.7, 0);
+      trunkUpper.rotation.z = -0.06;
+      trunkUpper.rotation.x = 0.04;
+      trunkUpper.castShadow = true;
+      trunkUpper.receiveShadow = true;
+      treeGroup.add(trunkUpper);
+
+      // 3. Buttress Roots radiating out
+      const rootCount = 7;
+      for (let i = 0; i < rootCount; i++) {
+        const angle = (i / rootCount) * Math.PI * 2 + (Math.random() * 0.3);
+        const rootLen = 2.4 + Math.random() * 1.2;
+        const rootGeo = new THREE.CylinderGeometry(0.2, 0.65, rootLen, 6);
+        rootGeo.translate(0, rootLen / 2, 0);
+
+        const root = new THREE.Mesh(rootGeo, barkMat);
+        root.castShadow = true;
+        root.receiveShadow = true;
+        root.position.set(Math.cos(angle) * 1.0, 0.1, Math.sin(angle) * 1.0);
+        root.rotation.x = Math.PI / 2.3;
+        root.rotation.z = -angle + Math.PI / 2;
+        treeGroup.add(root);
+      }
+
+      // 4. Primary Sprawling Boughs
+      const branchConfigs = [
+        { angle: 0.0,  pitch: 0.72, length: 4.8, radius: 0.52, yOffset: 5.4 },
+        { angle: 1.35, pitch: 0.68, length: 5.2, radius: 0.50, yOffset: 5.8 },
+        { angle: 2.5,  pitch: 0.80, length: 4.6, radius: 0.46, yOffset: 5.2 },
+        { angle: 3.8,  pitch: 0.70, length: 5.4, radius: 0.54, yOffset: 5.6 },
+        { angle: 5.0,  pitch: 0.76, length: 4.9, radius: 0.48, yOffset: 5.3 },
+        { angle: 0.7,  pitch: 0.35, length: 4.2, radius: 0.44, yOffset: 6.2 },
+        { angle: 3.2,  pitch: 0.40, length: 4.4, radius: 0.42, yOffset: 6.3 }
+      ];
+
+      const foliageClusters = [];
+
+      branchConfigs.forEach(b => {
+        const branchGeo = new THREE.CylinderGeometry(b.radius * 0.45, b.radius, b.length, 6);
+        branchGeo.translate(0, b.length / 2, 0);
+
+        const branch = new THREE.Mesh(branchGeo, barkMat);
+        branch.castShadow = true;
+        branch.receiveShadow = true;
+        branch.position.set(0, b.yOffset, 0);
+        branch.rotation.y = b.angle;
+        branch.rotation.z = b.pitch;
+        treeGroup.add(branch);
+
+        // Calculate branch terminal position for foliage cluster anchor
+        const endPos = new THREE.Vector3(0, b.length, 0);
+        endPos.applyAxisAngle(new THREE.Vector3(0, 0, 1), b.pitch);
+        endPos.applyAxisAngle(new THREE.Vector3(0, 1, 0), b.angle);
+        endPos.add(new THREE.Vector3(0, b.yOffset, 0));
+
+        foliageClusters.push({ pos: endPos, radius: 2.6 + Math.random() * 0.8 });
+
+        const midPos = endPos.clone().multiplyScalar(0.65).add(new THREE.Vector3(0, 1.2, 0));
+        foliageClusters.push({ pos: midPos, radius: 1.8 + Math.random() * 0.6 });
+      });
+
+      // Crowning central canopy nodes
+      foliageClusters.push(
+        { pos: new THREE.Vector3(0, 8.8, 0), radius: 3.2 },
+        { pos: new THREE.Vector3(-1.2, 8.2, 1.1), radius: 2.8 },
+        { pos: new THREE.Vector3(1.4, 8.4, -0.9), radius: 2.9 },
+        { pos: new THREE.Vector3(0.5, 9.6, 0.4), radius: 2.4 }
+      );
+
+      // 5. Broad Low-Poly Foliage Geometries
+      foliageClusters.forEach((cluster, index) => {
+        const color = CONFIG.tree.foliageColors[index % CONFIG.tree.foliageColors.length];
+        const foliageMat = new THREE.MeshStandardMaterial({
+          color: color,
+          roughness: 0.85,
+          metalness: 0.05,
+          flatShading: true
+        });
+
+        const detail = (index % 3 === 0) ? 2 : 1;
+        const foliageGeo = new THREE.IcosahedronGeometry(cluster.radius, detail);
+
+        // Deform vertices for broad, natural oak crown volume
+        const pos = foliageGeo.attributes.position;
+        const v = new THREE.Vector3();
+        for (let i = 0; i < pos.count; i++) {
+          v.fromBufferAttribute(pos, i);
+          const noise = 1 + (Math.sin(v.x * 2.5) * Math.cos(v.y * 2.5) * 0.12);
+          v.multiplyScalar(noise);
+          v.x *= 1.15;
+          v.z *= 1.15;
+          v.y *= 0.82;
+          pos.setXYZ(i, v.x, v.y, v.z);
+        }
+        foliageGeo.computeVertexNormals();
+
+        const foliageMesh = new THREE.Mesh(foliageGeo, foliageMat);
+        foliageMesh.position.copy(cluster.pos);
+        foliageMesh.castShadow = true;
+        foliageMesh.receiveShadow = true;
+        foliageMesh.rotation.set(
+          Math.random() * Math.PI,
+          Math.random() * Math.PI,
+          Math.random() * Math.PI
+        );
+        treeGroup.add(foliageMesh);
+      });
+
+      return treeGroup;
+    }
+
+    /**
+     * Forest Assembly:
+     * - Places the main prominent oak at the center (0, 0, 0)
+     * - Spawns 15 to 20 randomized surrounding trees between 8 and 25 units distance
+     */
+    function createForest() {
+      // 1. Central Ancient Oak
+      const mainOak = buildOakModel();
+      mainOak.position.set(0, 0, 0);
+      scene.add(mainOak);
+
+      // 2. Surrounding Secondary Trees
+      const { secondaryTreeCount, minRadius, maxRadius, minScale, maxScale } = CONFIG.forest;
+
+      for (let i = 0; i < secondaryTreeCount; i++) {
+        // Distribute in a ring from minRadius (8) to maxRadius (25)
+        const angle = (i / secondaryTreeCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.45;
+        const distance = minRadius + Math.random() * (maxRadius - minRadius);
+
+        const x = Math.cos(angle) * distance;
+        const z = Math.sin(angle) * distance;
+
+        // Clone hierarchy with shared geometries/materials for optimum performance
+        const treeClone = mainOak.clone(true);
+
+        // Randomize scale (0.5 to 1.2) with slight vertical variance
+        const scale = minScale + Math.random() * (maxScale - minScale);
+        const yStretch = 0.85 + Math.random() * 0.3;
+        treeClone.scale.set(scale, scale * yStretch, scale);
+
+        treeClone.position.set(x, 0, z);
+        treeClone.rotation.y = Math.random() * Math.PI * 2;
+
+        // Ensure shadows remain enabled on cloned meshes
+        treeClone.traverse(child => {
+          if (child.isMesh) {
+            child.castShadow = true;
+            child.receiveShadow = true;
+          }
+        });
+
+        scene.add(treeClone);
+      }
+    }
+
+    /**
+     * Forest Scatter:
+     * Widely distributes low-poly rocks, dense bushes (dark green spheres),
+     * and wild grass tufts across the entire terrain.
+     */
+    function createForestScatter() {
+      // 1. Weathered Stones & Boulders across the entire clearing
+      const rockMaterial = new THREE.MeshStandardMaterial({
+        color: 0x2e353c,
+        roughness: 0.9,
+        metalness: 0.08,
+        flatShading: true
+      });
+
+      const totalRocks = 65;
+      for (let i = 0; i < totalRocks; i++) {
+        const radius = 0.22 + Math.random() * 0.65;
+        const rockGeo = new THREE.DodecahedronGeometry(radius, 0);
+
+        // Distort geometry for non-uniform natural rock profiles
+        const pos = rockGeo.attributes.position;
+        const v = new THREE.Vector3();
+        const scaleX = 0.8 + Math.random() * 0.6;
+        const scaleY = 0.4 + Math.random() * 0.45;
+        const scaleZ = 0.8 + Math.random() * 0.6;
+
+        for (let j = 0; j < pos.count; j++) {
+          v.fromBufferAttribute(pos, j);
+          v.x *= scaleX;
+          v.y *= scaleY;
+          v.z *= scaleZ;
+          pos.setXYZ(j, v.x, v.y, v.z);
+        }
+        rockGeo.computeVertexNormals();
+
+        const rock = new THREE.Mesh(rockGeo, rockMaterial);
+
+        // Scatter across radius 1.5 to 34
+        const dist = 1.5 + Math.random() * 32.5;
+        const angle = Math.random() * Math.PI * 2;
+
+        rock.position.set(
+          Math.cos(angle) * dist,
+          radius * scaleY * 0.5,
+          Math.sin(angle) * dist
+        );
+
+        rock.rotation.set(
+          Math.random() * Math.PI,
+          Math.random() * Math.PI,
+          Math.random() * Math.PI
+        );
+
+        rock.castShadow = true;
+        rock.receiveShadow = true;
+        scene.add(rock);
+      }
+
+      // 2. Forest Undergrowth Bushes (Dark green low-poly spheres)
+      const bushColors = [0x0d2115, 0x11281a, 0x163321];
+      const totalBushes = 50;
+
+      for (let i = 0; i < totalBushes; i++) {
+        const bushRadius = 0.45 + Math.random() * 0.75;
+        const bushGeo = new THREE.IcosahedronGeometry(bushRadius, 1);
+
+        // Flatten vertically and add organic deformation
+        const pos = bushGeo.attributes.position;
+        const v = new THREE.Vector3();
+        for (let j = 0; j < pos.count; j++) {
+          v.fromBufferAttribute(pos, j);
+          v.y *= 0.65;
+          v.multiplyScalar(1.0 + (Math.sin(v.x * 4.0) * 0.1));
+          pos.setXYZ(j, v.x, v.y, v.z);
+        }
+        bushGeo.computeVertexNormals();
+
+        const bushMat = new THREE.MeshStandardMaterial({
+          color: bushColors[i % bushColors.length],
+          roughness: 0.9,
+          flatShading: true
+        });
+
+        const bush = new THREE.Mesh(bushGeo, bushMat);
+
+        // Scatter across forest grounds
+        const dist = 2.5 + Math.random() * 31.5;
+        const angle = Math.random() * Math.PI * 2;
+
+        bush.position.set(
+          Math.cos(angle) * dist,
+          bushRadius * 0.5,
+          Math.sin(angle) * dist
+        );
+        bush.rotation.y = Math.random() * Math.PI * 2;
+
+        bush.castShadow = true;
+        bush.receiveShadow = true;
+        scene.add(bush);
+      }
+
+      // 3. Wild Grass Tufts
+      const grassBladeMat = new THREE.MeshStandardMaterial({
+        color: 0x162c1d,
+        roughness: 0.85,
+        side: THREE.DoubleSide,
+        flatShading: true
+      });
+
+      const tuftCount = 80;
+      for (let i = 0; i < tuftCount; i++) {
+        const tuft = new THREE.Group();
+        const blades = 3 + Math.floor(Math.random() * 3);
+        const tuftHeight = 0.45 + Math.random() * 0.45;
+        const tuftWidth = 0.12 + Math.random() * 0.08;
+
+        for (let b = 0; b < blades; b++) {
+          const bladeGeo = new THREE.PlaneGeometry(tuftWidth, tuftHeight);
+          bladeGeo.translate(0, tuftHeight / 2, 0);
+
+          const blade = new THREE.Mesh(bladeGeo, grassBladeMat);
+          blade.rotation.y = (b / blades) * Math.PI + (Math.random() * 0.2);
+          blade.rotation.x = (Math.random() - 0.5) * 0.25;
+          blade.rotation.z = (Math.random() - 0.5) * 0.25;
+          blade.castShadow = true;
+          tuft.add(blade);
+        }
+
+        const dist = 1.8 + Math.random() * 26.0;
+        const angle = Math.random() * Math.PI * 2;
+
+        tuft.position.set(
+          Math.cos(angle) * dist,
+          0,
+          Math.sin(angle) * dist
+        );
+
+        scene.add(tuft);
+      }
+    }
+
+    /**
+     * Viewport Resize Event Handler
+     */
+    function onWindowResize() {
+      const width = window.innerWidth;
+      const height = window.innerHeight;
+
+      camera.aspect = width / height;
+      camera.updateProjectionMatrix();
+
+      renderer.setSize(width, height);
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    }
+
+    /**
+     * Main Animation & Render Loop
+     */
+    function animate() {
+      requestAnimationFrame(animate);
+
+      // Continuously update camera orbit rotation and damping
+      controls.update();
+
+      renderer.render(scene, camera);
+    }
+
+    // Launch scene on DOM load
+    window.addEventListener('DOMContentLoaded', init);
+  </script>
+</body>
+</html>
