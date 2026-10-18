@@ -1,4 +1,9 @@
-# Firefly Forest
+# Firefly Forest — 3D Nocturnal Diorama
+
+[![Three.js](https://img.shields.io/badge/Three.js-r160-black?logo=three.js)](https://threejs.org/)
+[![WebGL](https://img.shields.io/badge/WebGL-2.0-800000?logo=webgl)](https://www.khronos.org/webgl/)
+[![FPS](https://img.shields.io/badge/FPS-60%20Stable-00ffff)](#)
+[![License: MIT](https://img.shields.io/badge/License-MIT-d4af37)](LICENSE)
 
 A real-time, zero-dependency 3D nocturnal forest environment built with Three.js. The scene showcases an ancient oak centerpiece surrounded by a procedural forest clearing, rendered under atmospheric twilight lighting with soft shadows and exponential fog.
 
