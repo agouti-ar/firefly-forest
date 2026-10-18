@@ -47,6 +47,10 @@
   <script type="module">
     import * as THREE from 'three';
     import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+    import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+    import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+    import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
     /**
      * Scene Configuration Constants
@@ -58,34 +62,18 @@
         fogColor: 0x1a2540,         // Lighter twilight mist
         fogDensity: 0.015           // Less dense fog for distant visibility
       },
-      tree: {
-        trunkColor: 0x221711,       // Weathered dark oak bark
-        foliageColors: [
-          0x0c1e13,                 // Nocturnal forest shadow green
-          0x122a1b,                 // Deep mossy green
-          0x183624,                 // Mid-tone pine green
-          0x1d402b                  // Highlighted foliage edge
-        ]
-      },
       terrain: {
         radius: 55,
         segments: 72,
         color: 0x0d1410             // Dark earthy moss forest floor
-      },
-      forest: {
-        secondaryTreeCount: 18,     // Surrounding trees in forest
-        minRadius: 8,               // Minimum distance from center
-        maxRadius: 25,              // Maximum distance from center
-        minScale: 0.5,
-        maxScale: 1.2
       }
     };
 
     /**
-     * Application Singletons & Particle System State
+     * Application Singletons & State (Three.js Engine, Particles, Postprocessing)
      */
-    let scene, camera, renderer, controls;
-    let fireflyCount, fireflyGeo, fireflyData, fireflies;
+    let scene, camera, renderer, controls, composer;
+    let fireflyCount, fireflyGeo, fireflyData, fireflies, fireflyMat;
 
     /**
      * Entry Point: Initialize WebGL environment, lighting, geometry, and controls
@@ -98,10 +86,10 @@
       scene.background = new THREE.Color(0x12182b);
       scene.fog = new THREE.FogExp2(0x1a2540, 0.015);
 
-      // 2. Camera Setup (Elevated and pulled back for wider overview)
+      // 2. Camera Setup (Patch 3: Closer to ground level)
       const aspect = window.innerWidth / window.innerHeight;
       camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 160);
-      camera.position.set(0, 15, 35);
+      camera.position.set(0, 4, 25);
 
       // 3. Renderer with ACES Filmic Tone Mapping, Soft Shadows & Exposure (Patch 2: 1.5)
       renderer = new THREE.WebGLRenderer({
@@ -116,13 +104,13 @@
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
-      // 4. OrbitControls Overview Setup (Patch 1)
+      // 4. OrbitControls Overview Setup (Patch 3: Target higher up the trunk)
       controls = new OrbitControls(camera, renderer.domElement);
-      controls.target.set(0, 2, 0); // Focus on tree trunk
+      controls.target.set(0, 5, 0); // Focus into the center/canopy of the main tree
       controls.autoRotate = true;
       controls.autoRotateSpeed = 1.5;
       controls.maxPolarAngle = Math.PI / 2 - 0.05; // Prevent dipping beneath terrain
-      controls.minDistance = 10;
+      controls.minDistance = 6;
       controls.maxDistance = 60;
       controls.enableDamping = true;
       controls.dampingFactor = 0.05;
@@ -134,10 +122,25 @@
       createForestScatter();
       setupMushroomsAndFireflies();
 
-      // 6. Responsive Resize Handling
+      // 6. Post-processing Pipeline: UnrealBloomPass & OutputPass (Patch 3)
+      const renderScene = new RenderPass(scene, camera);
+      const bloomPass = new UnrealBloomPass(
+        new THREE.Vector2(window.innerWidth, window.innerHeight),
+        1.5,   // Bloom strength
+        0.4,   // Bloom radius
+        0.85   // Bloom threshold (only intense emitters and additive fireflies bloom)
+      );
+      const outputPass = new OutputPass();
+
+      composer = new EffectComposer(renderer);
+      composer.addPass(renderScene);
+      composer.addPass(bloomPass);
+      composer.addPass(outputPass);
+
+      // 7. Responsive Resize Handling
       window.addEventListener('resize', onWindowResize, false);
 
-      // 7. Start Render Loop
+      // 8. Start Render Loop
       animate();
     }
 
@@ -268,185 +271,71 @@
     }
 
     /**
-     * Procedural Tree Generator:
-     * Builds a detailed ancient oak mesh hierarchy (trunk, roots, branches, foliage clusters).
+     * Patch 3: High Tree Generator
+     * Tall, slender tapered trunk with multi-layered icosahedral foliage clusters.
      */
-    function buildOakModel() {
+    function createTree(scale = 1) {
       const treeGroup = new THREE.Group();
 
-      const barkMat = new THREE.MeshStandardMaterial({
-        color: CONFIG.tree.trunkColor,
-        roughness: 0.92,
-        metalness: 0.05,
-        flatShading: true
-      });
+      // Trunk (tall, tapered upward)
+      const trunkHeight = 8 * scale;
+      const trunkGeo = new THREE.CylinderGeometry(0.4 * scale, 1.2 * scale, trunkHeight, 7);
+      const trunkMat = new THREE.MeshStandardMaterial({ color: 0x2c1e16, roughness: 0.9 });
+      const trunk = new THREE.Mesh(trunkGeo, trunkMat);
+      trunk.position.y = trunkHeight / 2;
+      trunk.castShadow = true;
+      trunk.receiveShadow = true;
+      treeGroup.add(trunk);
 
-      // 1. Lower Trunk
-      const trunkLowerGeo = new THREE.CylinderGeometry(1.3, 1.9, 3.8, 10, 3);
-      trunkLowerGeo.translate(0, 1.9, 0);
-      const trunkLower = new THREE.Mesh(trunkLowerGeo, barkMat);
-      trunkLower.castShadow = true;
-      trunkLower.receiveShadow = true;
-      treeGroup.add(trunkLower);
+      // Canopy & foliage clusters (multiple icosahedrons at varying heights)
+      const leafMat = new THREE.MeshStandardMaterial({ color: 0x1a3b2b, roughness: 0.8, flatShading: true });
+      const numLeafClusters = 5 + Math.floor(Math.random() * 4);
 
-      // 2. Upper Trunk with natural lean
-      const trunkUpperGeo = new THREE.CylinderGeometry(0.95, 1.3, 3.2, 9, 3);
-      trunkUpperGeo.translate(0, 1.6, 0);
-      const trunkUpper = new THREE.Mesh(trunkUpperGeo, barkMat);
-      trunkUpper.position.set(0, 3.7, 0);
-      trunkUpper.rotation.z = -0.06;
-      trunkUpper.rotation.x = 0.04;
-      trunkUpper.castShadow = true;
-      trunkUpper.receiveShadow = true;
-      treeGroup.add(trunkUpper);
+      for (let i = 0; i < numLeafClusters; i++) {
+        const leafGeo = new THREE.IcosahedronGeometry((1.5 + Math.random() * 1.5) * scale, 1);
+        const leaves = new THREE.Mesh(leafGeo, leafMat);
 
-      // 3. Buttress Roots radiating out
-      const rootCount = 7;
-      for (let i = 0; i < rootCount; i++) {
-        const angle = (i / rootCount) * Math.PI * 2 + (Math.random() * 0.3);
-        const rootLen = 2.4 + Math.random() * 1.2;
-        const rootGeo = new THREE.CylinderGeometry(0.2, 0.65, rootLen, 6);
-        rootGeo.translate(0, rootLen / 2, 0);
+        // Distribute canopy around the upper trunk
+        const angle = (i / numLeafClusters) * Math.PI * 2 + Math.random();
+        const dist = Math.random() * 2.5 * scale;
 
-        const root = new THREE.Mesh(rootGeo, barkMat);
-        root.castShadow = true;
-        root.receiveShadow = true;
-        root.position.set(Math.cos(angle) * 1.0, 0.1, Math.sin(angle) * 1.0);
-        root.rotation.x = Math.PI / 2.3;
-        root.rotation.z = -angle + Math.PI / 2;
-        treeGroup.add(root);
-      }
-
-      // 4. Primary Sprawling Boughs
-      const branchConfigs = [
-        { angle: 0.0,  pitch: 0.72, length: 4.8, radius: 0.52, yOffset: 5.4 },
-        { angle: 1.35, pitch: 0.68, length: 5.2, radius: 0.50, yOffset: 5.8 },
-        { angle: 2.5,  pitch: 0.80, length: 4.6, radius: 0.46, yOffset: 5.2 },
-        { angle: 3.8,  pitch: 0.70, length: 5.4, radius: 0.54, yOffset: 5.6 },
-        { angle: 5.0,  pitch: 0.76, length: 4.9, radius: 0.48, yOffset: 5.3 },
-        { angle: 0.7,  pitch: 0.35, length: 4.2, radius: 0.44, yOffset: 6.2 },
-        { angle: 3.2,  pitch: 0.40, length: 4.4, radius: 0.42, yOffset: 6.3 }
-      ];
-
-      const foliageClusters = [];
-
-      branchConfigs.forEach(b => {
-        const branchGeo = new THREE.CylinderGeometry(b.radius * 0.45, b.radius, b.length, 6);
-        branchGeo.translate(0, b.length / 2, 0);
-
-        const branch = new THREE.Mesh(branchGeo, barkMat);
-        branch.castShadow = true;
-        branch.receiveShadow = true;
-        branch.position.set(0, b.yOffset, 0);
-        branch.rotation.y = b.angle;
-        branch.rotation.z = b.pitch;
-        treeGroup.add(branch);
-
-        // Calculate branch terminal position for foliage cluster anchor
-        const endPos = new THREE.Vector3(0, b.length, 0);
-        endPos.applyAxisAngle(new THREE.Vector3(0, 0, 1), b.pitch);
-        endPos.applyAxisAngle(new THREE.Vector3(0, 1, 0), b.angle);
-        endPos.add(new THREE.Vector3(0, b.yOffset, 0));
-
-        foliageClusters.push({ pos: endPos, radius: 2.6 + Math.random() * 0.8 });
-
-        const midPos = endPos.clone().multiplyScalar(0.65).add(new THREE.Vector3(0, 1.2, 0));
-        foliageClusters.push({ pos: midPos, radius: 1.8 + Math.random() * 0.6 });
-      });
-
-      // Crowning central canopy nodes
-      foliageClusters.push(
-        { pos: new THREE.Vector3(0, 8.8, 0), radius: 3.2 },
-        { pos: new THREE.Vector3(-1.2, 8.2, 1.1), radius: 2.8 },
-        { pos: new THREE.Vector3(1.4, 8.4, -0.9), radius: 2.9 },
-        { pos: new THREE.Vector3(0.5, 9.6, 0.4), radius: 2.4 }
-      );
-
-      // 5. Broad Low-Poly Foliage Geometries
-      foliageClusters.forEach((cluster, index) => {
-        const color = CONFIG.tree.foliageColors[index % CONFIG.tree.foliageColors.length];
-        const foliageMat = new THREE.MeshStandardMaterial({
-          color: color,
-          roughness: 0.85,
-          metalness: 0.05,
-          flatShading: true
-        });
-
-        const detail = (index % 3 === 0) ? 2 : 1;
-        const foliageGeo = new THREE.IcosahedronGeometry(cluster.radius, detail);
-
-        // Deform vertices for broad, natural oak crown volume
-        const pos = foliageGeo.attributes.position;
-        const v = new THREE.Vector3();
-        for (let i = 0; i < pos.count; i++) {
-          v.fromBufferAttribute(pos, i);
-          const noise = 1 + (Math.sin(v.x * 2.5) * Math.cos(v.y * 2.5) * 0.12);
-          v.multiplyScalar(noise);
-          v.x *= 1.15;
-          v.z *= 1.15;
-          v.y *= 0.82;
-          pos.setXYZ(i, v.x, v.y, v.z);
-        }
-        foliageGeo.computeVertexNormals();
-
-        const foliageMesh = new THREE.Mesh(foliageGeo, foliageMat);
-        foliageMesh.position.copy(cluster.pos);
-        foliageMesh.castShadow = true;
-        foliageMesh.receiveShadow = true;
-        foliageMesh.rotation.set(
-          Math.random() * Math.PI,
-          Math.random() * Math.PI,
-          Math.random() * Math.PI
+        leaves.position.set(
+          Math.cos(angle) * dist,
+          trunkHeight - (Math.random() * 3 * scale),
+          Math.sin(angle) * dist
         );
-        treeGroup.add(foliageMesh);
-      });
+        leaves.castShadow = true;
+        leaves.receiveShadow = true;
+        treeGroup.add(leaves);
+      }
 
       return treeGroup;
     }
 
     /**
-     * Forest Assembly:
-     * - Places the main prominent oak at the center (0, 0, 0)
-     * - Spawns 15 to 20 randomized surrounding trees between 8 and 25 units distance
+     * Patch 3: Deep Forest Assembly
+     * Prominent central main tree and 30 surrounding tall trees on an expanded perimeter.
      */
     function createForest() {
-      // 1. Central Ancient Oak
-      const mainOak = buildOakModel();
-      mainOak.position.set(0, 0, 0);
-      scene.add(mainOak);
+      const forestGroup = new THREE.Group();
 
-      // 2. Surrounding Secondary Trees
-      const { secondaryTreeCount, minRadius, maxRadius, minScale, maxScale } = CONFIG.forest;
+      // Main centerpiece tree in the clearing (scale 1.8)
+      const mainTree = createTree(1.8);
+      mainTree.position.set(0, 0, 0);
+      forestGroup.add(mainTree);
 
-      for (let i = 0; i < secondaryTreeCount; i++) {
-        // Distribute in a ring from minRadius (8) to maxRadius (25)
-        const angle = (i / secondaryTreeCount) * Math.PI * 2 + (Math.random() - 0.5) * 0.45;
-        const distance = minRadius + Math.random() * (maxRadius - minRadius);
+      // Surrounding forest trees (expanded ring from radius 15 to 40)
+      for (let i = 0; i < 30; i++) {
+        const tree = createTree(0.8 + Math.random() * 0.7);
+        const angle = Math.random() * Math.PI * 2;
+        const radius = 15 + Math.random() * 25;
 
-        const x = Math.cos(angle) * distance;
-        const z = Math.sin(angle) * distance;
-
-        // Clone hierarchy with shared geometries/materials for optimum performance
-        const treeClone = mainOak.clone(true);
-
-        // Randomize scale (0.5 to 1.2) with slight vertical variance
-        const scale = minScale + Math.random() * (maxScale - minScale);
-        const yStretch = 0.85 + Math.random() * 0.3;
-        treeClone.scale.set(scale, scale * yStretch, scale);
-
-        treeClone.position.set(x, 0, z);
-        treeClone.rotation.y = Math.random() * Math.PI * 2;
-
-        // Ensure shadows remain enabled on cloned meshes
-        treeClone.traverse(child => {
-          if (child.isMesh) {
-            child.castShadow = true;
-            child.receiveShadow = true;
-          }
-        });
-
-        scene.add(treeClone);
+        tree.position.set(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
+        tree.rotation.y = Math.random() * Math.PI * 2;
+        forestGroup.add(tree);
       }
+
+      scene.add(forestGroup);
     }
 
     /**
@@ -645,41 +534,53 @@
       }
       scene.add(mushroomGroup);
 
-      // 2. Firefly Particle System
-      fireflyCount = 150;
+      // 2. Firefly Particle System (Patch 3: 300 multi-colored pulsating particles)
+      fireflyCount = 300;
       fireflyGeo = new THREE.BufferGeometry();
       const fireflyPositions = new Float32Array(fireflyCount * 3);
+      const fireflyColors = new Float32Array(fireflyCount * 3);
       fireflyData = [];
 
       for (let i = 0; i < fireflyCount; i++) {
-        // Scatter around scene (radius up to 15, height up to 8)
-        const x = (Math.random() - 0.5) * 30;
-        const y = Math.random() * 8 + 0.5;
-        const z = (Math.random() - 0.5) * 30;
+        // Distribute across a broad forest radius (up to 25 units)
+        const angle = Math.random() * Math.PI * 2;
+        const radius = Math.random() * 25;
+        const x = Math.cos(angle) * radius;
+        const z = Math.sin(angle) * radius;
+        const y = Math.random() * 7 + 0.5;
 
         fireflyPositions[i * 3] = x;
         fireflyPositions[i * 3 + 1] = y;
         fireflyPositions[i * 3 + 2] = z;
 
-        // Kinematic parameters: speed, phase shifts, wander radius
+        // Vivid spectrum: green, golden-yellow, soft cyan
+        const color = new THREE.Color().setHSL(
+          0.2 + Math.random() * 0.2, // Hue (green-yellow-cyan spectrum)
+          1.0,                       // Saturation
+          0.6                        // Lightness
+        );
+        fireflyColors[i * 3] = color.r;
+        fireflyColors[i * 3 + 1] = color.g;
+        fireflyColors[i * 3 + 2] = color.b;
+
         fireflyData.push({
           speed: 0.5 + Math.random(),
           phaseX: Math.random() * Math.PI * 2,
           phaseY: Math.random() * Math.PI * 2,
-          phaseZ: Math.random() * Math.PI * 2,
-          radius: 1 + Math.random() * 2
+          phaseZ: Math.random() * Math.PI * 2
         });
       }
 
       fireflyGeo.setAttribute('position', new THREE.BufferAttribute(fireflyPositions, 3));
+      fireflyGeo.setAttribute('color', new THREE.BufferAttribute(fireflyColors, 3));
 
-      const fireflyMat = new THREE.PointsMaterial({
-        size: 0.8,
+      fireflyMat = new THREE.PointsMaterial({
+        size: 1.2,
         map: createGlowTexture(),
+        vertexColors: true,
         transparent: true,
         blending: THREE.AdditiveBlending,
-        depthWrite: false,
-        color: 0xaaff66
+        depthWrite: false
       });
 
       fireflies = new THREE.Points(fireflyGeo, fireflyMat);
@@ -698,10 +599,15 @@
 
       renderer.setSize(width, height);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+
+      // Resize postprocessing composer buffers
+      if (composer) {
+        composer.setSize(width, height);
+      }
     }
 
     /**
-     * Main Animation & Render Loop
+     * Main Animation & Render Loop (EffectComposer with UnrealBloomPass)
      */
     function animate() {
       requestAnimationFrame(animate);
@@ -709,9 +615,15 @@
       // Continuously update camera orbit rotation and damping
       controls.update();
 
-      // Animate fireflies (Patch 2)
+      const time = Date.now() * 0.001;
+
+      // Pulse fireflies glow opacity (Patch 3)
+      if (fireflyMat) {
+        fireflyMat.opacity = 0.6 + Math.sin(time * 3) * 0.4;
+      }
+
+      // Animate fireflies wandering smoothly with harmonic wave functions
       if (fireflies && fireflyData && fireflyData.length) {
-        const time = Date.now() * 0.001;
         const positions = fireflies.geometry.attributes.position.array;
 
         for (let i = 0; i < fireflyCount; i++) {
@@ -724,8 +636,8 @@
           positions[i3 + 2] += Math.sin(time * data.speed * 1.2 + data.phaseZ) * 0.02;
 
           // Soft boundary containment towards the center
-          if (Math.abs(positions[i3]) > 20) positions[i3] *= 0.99;
-          if (Math.abs(positions[i3 + 2]) > 20) positions[i3 + 2] *= 0.99;
+          if (Math.abs(positions[i3]) > 25) positions[i3] *= 0.99;
+          if (Math.abs(positions[i3 + 2]) > 25) positions[i3 + 2] *= 0.99;
           if (positions[i3 + 1] > 12) positions[i3 + 1] *= 0.99;
           if (positions[i3 + 1] < 0.5) positions[i3 + 1] = 0.5 + Math.random();
         }
@@ -733,7 +645,12 @@
         fireflies.geometry.attributes.position.needsUpdate = true;
       }
 
-      renderer.render(scene, camera);
+      // Render through postprocessing pipeline
+      if (composer) {
+        composer.render();
+      } else {
+        renderer.render(scene, camera);
+      }
     }
 
     // Launch scene on DOM load
