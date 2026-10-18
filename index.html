@@ -84,7 +84,7 @@
       renderer.setSize(window.innerWidth, window.innerHeight);
       renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.4;
+      renderer.toneMappingExposure = 1.05; // Balanced exposure to prevent white clipping
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
@@ -105,13 +105,13 @@
       createIslandDetails();
       setupMushroomsAndFireflies();
 
-      // 6. Post-processing Pipeline: UnrealBloomPass & OutputPass (Patch 4 tuned)
+      // 6. Post-processing Pipeline: UnrealBloomPass & OutputPass (Calibrated for crisp diorama)
       const renderScene = new RenderPass(scene, camera);
       const bloomPass = new UnrealBloomPass(
         new THREE.Vector2(window.innerWidth, window.innerHeight),
-        1.2,   // Bloom strength (tuned for glowing water and sakura aura)
-        0.4,   // Bloom radius
-        0.60   // Bloom threshold (lowered so pink sakura blossoms & water catch bloom)
+        0.45,  // Gentle atmospheric bloom strength (prevents whiteout blowout)
+        0.35,  // Bloom radius
+        0.82   // Higher threshold so only glowing points/rim bloom, preserving island details
       );
       const outputPass = new OutputPass();
 
@@ -155,11 +155,11 @@
      */
     function setupLighting() {
       // 1. Warm Ambient Light
-      const ambientLight = new THREE.AmbientLight(0xffccaa, 1.0);
+      const ambientLight = new THREE.AmbientLight(0xffd5b8, 0.75);
       scene.add(ambientLight);
 
       // 2. Sunset Directional Light
-      const sunsetLight = new THREE.DirectionalLight(0xffaa88, 2.0);
+      const sunsetLight = new THREE.DirectionalLight(0xffaa88, 1.8);
       sunsetLight.position.set(-20, 15, 20);
       sunsetLight.castShadow = true;
       sunsetLight.shadow.mapSize.width = 2048;
@@ -174,13 +174,13 @@
       sunsetLight.shadow.radius = 2.0;
       scene.add(sunsetLight);
 
-      // 3. Turquoise water light reflecting from underneath and through the water
-      const waterLight = new THREE.PointLight(0x00ffff, 3.0, 20);
+      // 3. Subtle turquoise water glow reflecting from underneath
+      const waterLight = new THREE.PointLight(0x00d8f0, 1.2, 16);
       waterLight.position.set(0, -2, 0);
       scene.add(waterLight);
 
-      // 4. Subtle warm glow near central tree roots
-      const rootGlow = new THREE.PointLight(0xffaa55, 1.8, 10);
+      // 4. Warm subtle glow near central tree roots
+      const rootGlow = new THREE.PointLight(0xffaa55, 1.2, 8);
       rootGlow.position.set(0, 1.2, 0);
       scene.add(rootGlow);
     }
@@ -218,14 +218,16 @@
       grassTop.receiveShadow = true;
       islandGroup.add(grassTop);
 
-      // 3. Luminous Turquoise Water Ring (Along island edge)
+      // 3. Luminous Turquoise Water Ring (Balanced soft glow)
       const waterGeo = new THREE.RingGeometry(14, 17.5, 32);
       const waterMat = new THREE.MeshStandardMaterial({
-        color: 0x00ffff,
-        emissive: 0x00aaff,
-        emissiveIntensity: 2.0,
+        color: 0x18d0d6,
+        emissive: 0x008899,
+        emissiveIntensity: 0.35,
+        roughness: 0.2,
+        metalness: 0.1,
         transparent: true,
-        opacity: 0.75,
+        opacity: 0.8,
         side: THREE.DoubleSide
       });
       const waterRing = new THREE.Mesh(waterGeo, waterMat);
