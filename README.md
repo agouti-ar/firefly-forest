@@ -54,29 +54,14 @@ Firefly Forest is designed as a standalone, modular Three.js experiment. It leve
 
 ---
 
-## Getting Started
+## Launching the Scene
 
-Because the application relies exclusively on standard Web APIs and CDN-hosted ES modules, no installation or compilation step is required.
+### Live Interactive Scene
+Run the real-time WebGL application directly in your browser:  
+**[https://agouti-ar.github.io/firefly-forest/](https://agouti-ar.github.io/firefly-forest/)**
 
-### Option 1: Direct File Launch
-Double-click `index.html` or open it directly in any modern browser:
-```bash
-file:///path/to/firefly-forest/index.html
-```
-
-### Option 2: Local HTTP Server (Recommended)
-Running through a local web server provides the best performance and standard origin policies:
-
-Using Python:
-```bash
-python -m http.server 8000
-```
-Then navigate to:
-```
-http://localhost:8000
-```
-
-Using Node.js (`npx`):
+### Local Inspection
+Double-click `index.html` in your file explorer or serve the directory with any static server:
 ```bash
 npx serve .
 ```
