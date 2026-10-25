@@ -14,14 +14,16 @@ A procedural Three.js night diorama: a sakura grove on a floating asteroid, surr
 - Two swimming koi, twenty floating leaves and ten open water-lily blooms (sixteen/eight on compact devices), and two breathing frogs that occasionally hop. Fish contact shadows stay directly beneath them.
 - Optional Web Audio ambience uses CC0 field recordings of insects and frogs, a stream, and rare owl calls, with wind and splash effects synchronized with koi jumps. Recordings load only after enabling sound; synthesized ambience remains a fallback. The English Sound on/off control includes a volume slider, remembers volume, and supports touch screens. Audio starts off and pauses in background tabs. See AUDIO-CREDITS.md for sources.
 - Airy ground mist disperses below the island edges. A cratered moon with dark maria and a soft halo completes an artistic phase cycle in 90 seconds and drifts around the sky in eight minutes. Its light direction and shadows follow its movement. A faint nebula adds depth.
-- A 126-second firefly sequence opens with a luminous koi, then morphs through all twelve zodiac glyphs, eight seconds per sign, before dispersing. Tree canopy and trunk colliders keep particles outside the trees, including during formation transitions.
+- A 146-second firefly cycle opens with a luminous koi, then morphs through all twelve zodiac glyphs, eight seconds per sign, before dispersing. An additional twenty-second rest leaves the swarm in the grove between performances. Tree canopy and trunk colliders keep particles outside the trees, including during formation transitions.
 - Procedural soil and bark grain, softly irregular textured sakura crowns and falling petals.
-- A more detailed owl with patterned feathers, head turns, blinking and occasional wing stretches.
+- A more detailed owl with patterned feathers, blinking and occasional wing stretches. It swivels toward the clearing and looks up during the firefly performance.
 - Cinematic orbit with a gradual change in elevation.
 
 ## Controls
 
-Drag to orbit, scroll/pinch to zoom. Fireflies gently avoid the mouse pointer over the island. Close-up inspection has gentle camera sway. After five seconds without camera interaction, the camera returns to the view saved before zooming over 3.5 seconds, then resumes its orbit (about 108 seconds per revolution). Mouse movement during inspection postpones the return. Reduced-motion preferences disable automatic camera motion and animal jumps.
+Drag to orbit, scroll/pinch to zoom. Fireflies gently avoid the mouse pointer over the island. Close-up inspection has gentle camera sway. After five seconds without camera interaction, the camera returns to the view saved before zooming over 3.5 seconds, then resumes its orbit (about 95 seconds per revolution). Mouse movement during inspection postpones the return. Reduced-motion preferences disable automatic camera motion and animal jumps.
+
+The audio listener follows the camera at 20 Hz. Separate world-positioned forest and water zones, the owl's perch, and each fish splash use distance attenuation and stereo direction. Wind has a broader range than local pond sounds. The night field recording contains both insects and frogs; it is positioned as a mixed habitat recording, not separated into individual animals. While recordings load, only the wind bed plays; synthetic calls are used only if loading fails.
 
 ## Run locally
 

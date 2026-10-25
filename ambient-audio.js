@@ -28,6 +28,41 @@ const mute = '<path d="m16 9 5 6m0-6-5 6"/>';
 let context, master, splashBuffer, scheduler, enabled = false;
 let cricketTimes = [], frogTimes = [];
 let naturalReady = false, naturalBuffers = {}, nextOwl = 0;
+let listenerPose;
+const owlPosition = [8.3, 4.95, 8];
+
+// World units match the Three.js scene. Equal-power panning avoids expensive HRTF convolution.
+function spatialNode(position, reference = 18, rolloff = 1.1) {
+  if (!context.createPanner) return context.createStereoPanner();
+  const node = context.createPanner();
+  node.panningModel = 'equalpower';
+  node.distanceModel = 'inverse';
+  node.refDistance = reference;
+  node.maxDistance = 400;
+  node.rolloffFactor = rolloff;
+  node.coneInnerAngle = 360;
+  if (node.positionX) ['X', 'Y', 'Z'].forEach((axis, i) => { node[`position${axis}`].value = position[i]; });
+  else node.setPosition(...position);
+  return node;
+}
+function updateListener() {
+  if (!context || !listenerPose || context.state !== 'running') return;
+  const listener = context.listener;
+  if (!listener) return;
+  const { position, forward, up } = listenerPose;
+  if (listener.positionX) {
+    for (let i = 0; i < 3; i++) {
+      const axis = ['X', 'Y', 'Z'][i];
+      listener[`position${axis}`].setTargetAtTime(position[i], context.currentTime, 0.04);
+      listener[`forward${axis}`].setTargetAtTime(forward[i], context.currentTime, 0.04);
+      listener[`up${axis}`].setTargetAtTime(up[i], context.currentTime, 0.04);
+    }
+  } else {
+    listener.setPosition(...position);
+    listener.setOrientation(...forward, ...up);
+  }
+}
+window.addEventListener('forest-listener', event => { listenerPose = event.detail; updateListener(); });
 
 function rms(buffer) {
   const data = buffer.getChannelData(0);
@@ -54,14 +89,13 @@ function seamlessLoop(engine, buffer, seconds) {
   }
   return output;
 }
-function startRecordedLoop(buffer, targetLevel, pan) {
-  const source = context.createBufferSource(), gain = context.createGain(), stereo = context.createStereoPanner();
+function startRecordedLoop(buffer, targetLevel, position, offset = 0, reference = 23) {
+  const source = context.createBufferSource(), gain = context.createGain(), stereo = spatialNode(position, reference, 0.85);
   source.buffer = buffer; source.loop = true;
-  stereo.pan.value = pan;
   gain.gain.setValueAtTime(0, context.currentTime);
   gain.gain.linearRampToValueAtTime(Math.min(2.5, targetLevel / Math.max(0.015, rms(buffer))), context.currentTime + 2);
   source.connect(gain).connect(stereo).connect(master);
-  source.start();
+  source.start(0, offset % buffer.duration);
 }
 async function loadRecordings(engine) {
   panel.dataset.recordings = 'loading';
@@ -74,8 +108,10 @@ async function loadRecordings(engine) {
     }));
     if (context !== engine || engine.state === 'closed') return;
     naturalBuffers = { night: buffers[0], stream: buffers[1], owl: buffers[2] };
-    startRecordedLoop(naturalBuffers.night, 0.07, -0.08);
-    startRecordedLoop(naturalBuffers.stream, 0.026, 0.3);
+    startRecordedLoop(naturalBuffers.night, 0.055, [-8, 1, -4], 7, 28);
+    startRecordedLoop(naturalBuffers.night, 0.055, [7, 0.8, 6], 31, 28);
+    startRecordedLoop(naturalBuffers.stream, 0.022, [-10, 0.65, 5]);
+    startRecordedLoop(naturalBuffers.stream, 0.022, [9, 0.65, -5], 11);
     naturalReady = true;
     panel.dataset.recordings = 'ready';
   } catch {
@@ -84,16 +120,15 @@ async function loadRecordings(engine) {
 }
 function owlCall(now) {
   if (naturalBuffers.owl) {
-    const source = context.createBufferSource(), gain = context.createGain(), stereo = context.createStereoPanner();
+    const source = context.createBufferSource(), gain = context.createGain(), stereo = spatialNode(owlPosition, 20);
     source.buffer = naturalBuffers.owl;
-    stereo.pan.value = -0.35;
     gain.gain.value = Math.min(1.2, 0.07 / Math.max(0.02, rms(source.buffer)));
     source.connect(gain).connect(stereo).connect(master);
     source.onended = () => { source.disconnect(); gain.disconnect(); stereo.disconnect(); };
     source.start(now + 0.02);
   } else {
-    voice(430, now + 0.02, 0.32, 0.055, -0.35, 360);
-    voice(395, now + 0.5, 0.85, 0.07, -0.35, 335);
+    voice(430, now + 0.02, 0.32, 0.055, -0.35, 360, owlPosition);
+    voice(395, now + 0.5, 0.85, 0.07, -0.35, 335, owlPosition);
   }
 }
 
@@ -109,30 +144,29 @@ function applyVolume() {
   master.gain.setTargetAtTime(enabled ? volume * 2 : 0, context.currentTime, 0.12);
 }
 
-function voice(frequency, start, duration, amplitude, pan, endFrequency = frequency) {
+function voice(frequency, start, duration, amplitude, pan, endFrequency = frequency, position = [pan * 14, 1, 6]) {
   const oscillator = context.createOscillator();
   const envelope = context.createGain();
-  const stereo = context.createStereoPanner();
+  const stereo = spatialNode(position);
   oscillator.type = frequency < 500 ? 'triangle' : 'sine';
   oscillator.frequency.setValueAtTime(frequency, start);
   oscillator.frequency.exponentialRampToValueAtTime(endFrequency, start + duration);
   envelope.gain.setValueAtTime(0, start);
   envelope.gain.linearRampToValueAtTime(amplitude, start + 0.012);
   envelope.gain.exponentialRampToValueAtTime(0.00001, start + duration);
-  stereo.pan.value = pan;
   oscillator.connect(envelope).connect(stereo).connect(master);
   oscillator.onended = () => { oscillator.disconnect(); envelope.disconnect(); stereo.disconnect(); };
   oscillator.start(start);
   oscillator.stop(start + duration + 0.02);
 }
 
-function splash(strength = 1, pan = 0) {
+function splash(strength = 1, position = [0, 0.65, 0]) {
   if (!enabled || !context || context.state !== 'running' || document.hidden) return;
   const start = context.currentTime + 0.02;
   const source = context.createBufferSource();
   const filter = context.createBiquadFilter();
   const envelope = context.createGain();
-  const stereo = context.createStereoPanner();
+  const stereo = spatialNode(position, 16);
   source.buffer = splashBuffer;
   filter.type = 'lowpass';
   filter.frequency.setValueAtTime(3200, start);
@@ -140,20 +174,19 @@ function splash(strength = 1, pan = 0) {
   envelope.gain.setValueAtTime(0, start);
   envelope.gain.linearRampToValueAtTime(0.22 * strength, start + 0.018);
   envelope.gain.exponentialRampToValueAtTime(0.00001, start + 0.6);
-  stereo.pan.value = Math.max(-0.8, Math.min(0.8, pan));
   source.connect(filter).connect(envelope).connect(stereo).connect(master);
   source.onended = () => { source.disconnect(); filter.disconnect(); envelope.disconnect(); stereo.disconnect(); };
   source.start(start);
   source.stop(start + 0.65);
-  voice(310, start + 0.03, 0.18, 0.06 * strength, pan, 115);
-  voice(430, start + 0.12, 0.2, 0.035 * strength, pan, 180);
+  voice(310, start + 0.03, 0.18, 0.06 * strength, 0, 115, position);
+  voice(430, start + 0.12, 0.2, 0.035 * strength, 0, 180, position);
 }
 
 function scheduleNight() {
   if (!enabled || document.hidden || context.state !== 'running') return;
   const now = context.currentTime;
   for (let actor = 0; actor < cricketTimes.length; actor++) {
-    if (naturalReady) break;
+    if (naturalReady || panel.dataset.recordings === 'loading') break;
     if (now < cricketTimes[actor]) continue;
     const frequency = [2900, 3550, 4200][actor] + Math.random() * 180;
     const pan = [-0.65, 0.4, 0.05][actor];
@@ -168,7 +201,7 @@ function scheduleNight() {
     cricketTimes[actor] = cursor + 0.04 + Math.random() * 0.3;
   }
   for (let actor = 0; actor < frogTimes.length; actor++) {
-    if (naturalReady) break;
+    if (naturalReady || panel.dataset.recordings === 'loading') break;
     if (now < frogTimes[actor]) continue;
     const frequency = [145, 205, 115][actor];
     const pan = [-0.5, 0.55, 0.1][actor];
@@ -177,7 +210,9 @@ function scheduleNight() {
     }
     frogTimes[actor] = now + 4 + actor * 0.7 + Math.random() * 2;
   }
-  if (now >= nextOwl) { owlCall(now); nextOwl = now + 35 + Math.random() * 20; }
+  if (now >= nextOwl && panel.dataset.recordings !== 'loading') {
+    owlCall(now); nextOwl = now + 35 + Math.random() * 20;
+  }
 }
 
 function createAmbience() {
@@ -215,7 +250,7 @@ function createAmbience() {
   depth.gain.value = 0.065;
   modulation.connect(depth).connect(bed.gain);
   modulation.start();
-  water.connect(filter).connect(bed).connect(master);
+  water.connect(filter).connect(bed).connect(spatialNode([0, 4, 0], 35, 0.55)).connect(master);
   water.start();
   splashBuffer = context.createBuffer(1, context.sampleRate, context.sampleRate);
   const splashSamples = splashBuffer.getChannelData(0);
@@ -230,6 +265,7 @@ toggle.addEventListener('click', async () => {
   try {
     if (!context || context.state === 'closed') createAmbience();
     await context.resume();
+    updateListener();
     enabled = !enabled;
     applyVolume();
     clearInterval(scheduler);
@@ -255,10 +291,12 @@ volumeControl.addEventListener('input', () => {
   try { localStorage.setItem('firefly-forest-volume', String(volume)); } catch { /* Optional. */ }
 });
 window.addEventListener('pond-splash', event => splash(event.detail?.strength ?? 1,
-  (event.detail?.x ?? 0) / 22));
-window.addEventListener('pond-frog', () => {
-  if (!naturalReady && enabled && context?.state === 'running' && !document.hidden) {
-    voice(180, context.currentTime + 0.02, 0.25, 0.1, 0, 105);
+  [event.detail?.x ?? 0, 0.65, event.detail?.z ?? 0]));
+window.addEventListener('pond-frog', event => {
+  if (!naturalReady && panel.dataset.recordings !== 'loading'
+      && enabled && context?.state === 'running' && !document.hidden) {
+    voice(180, context.currentTime + 0.02, 0.25, 0.1, 0, 105,
+      event.detail?.position ?? [0, 0.65, 0]);
   }
 });
 document.addEventListener('visibilitychange', async () => {
