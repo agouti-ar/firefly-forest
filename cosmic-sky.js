@@ -90,7 +90,7 @@ export function createCosmicSky(THREE, reducedMotion = false) {
     output.set(x, y, 0.95).unproject(camera).sub(camera.position).normalize()
       .multiplyScalar(195).add(camera.position);
   }
-  return { mesh: group, texture, meteor, head, halo, update(time, camera) {
+  return { mesh: group, backdrop: mesh, texture, meteor, head, halo, update(time, camera) {
     const cycle = time % 16, progress = (cycle - 5) / 2.6;
     meteor.visible = !reducedMotion && progress > 0 && progress < 1;
     shootingStar.visible = meteor.visible;

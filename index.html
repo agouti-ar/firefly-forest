@@ -97,15 +97,15 @@
     import { makeForestDetails } from './forest-details.js?v=mobile-20261025';
     import { createZodiacPatterns } from './swarm-patterns.js';
     import { createTreeAvoidance } from './firefly-avoidance.js?v=mobile-20261025';
-    import { createCosmicSky } from './cosmic-sky.js';
-    import { createAccretionDisk } from './accretion-disk.js?v=mobile-20261025';
+    import { createCosmicSky } from './cosmic-sky.js?v=blackhole-20261025';
+    import { createBlackHole, captureBlackHoleSky } from './black-hole.js?v=blackhole-20261025';
     const details = makeForestDetails(THREE);
     const treeAvoidance = createTreeAvoidance(THREE);
 
     /**
      * Application Singletons & State
      */
-    let scene, camera, renderer, controls, composer, bloomPass, accretionDisk;
+    let scene, camera, renderer, controls, composer, bloomPass, accretionDisk, skyStars;
     let nextShadowFrame = 0;
     let islandGroup;
     let fireflyCount, fireflyGeo, fireflyData, fireflies, fireflyMat;
@@ -156,7 +156,7 @@
     /**
      * Entry Point: Initialize WebGL environment, lighting, geometry, and controls
      */
-    function init() {
+    async function init() {
       const canvas = document.getElementById('webgl-canvas');
       const stage = name => {
         canvas.dataset.initStage = name;
@@ -175,7 +175,7 @@
 
       // 2. Camera Setup (Patch 4: Isometric angle overlooking the diorama)
       const aspect = window.innerWidth / window.innerHeight;
-      camera = new THREE.PerspectiveCamera(aspect < 1 ? 50 : 45, aspect, 0.2, 600);
+      camera = new THREE.PerspectiveCamera(aspect < 1 ? 50 : 45, aspect, 0.2, 900);
       overviewRadius = Math.max(56, 29 / (Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * aspect));
       const framing = overviewRadius / Math.hypot(36, 23, 36);
       camera.position.set(36 * framing, 1 + 23 * framing, 36 * framing);
@@ -208,9 +208,12 @@
       controls.enableDamping = true;
       controls.dampingFactor = 0.05;
       camera.lookAt(controls.target);
-      accretionDisk = createAccretionDisk(THREE);
-      accretionDisk.place(camera);
-      scene.add(accretionDisk.mesh);
+      if (new URLSearchParams(location.search).get('blackhole') !== '0') {
+        const environment = captureBlackHoleSky(THREE, renderer, cosmicSky.backdrop, skyStars, compactDevice);
+        accretionDisk = createBlackHole(THREE, { compact: compactDevice, environment });
+        accretionDisk.place(camera);
+        scene.add(accretionDisk.mesh);
+      }
       controls.addEventListener('start', () => {
         cameraHeld = true;
         gestureStartView = snapshotCamera();
@@ -289,6 +292,22 @@
       canvas.addEventListener('pointerleave', () => { pointerActive = false; });
       window.addEventListener('blur', () => { pointerActive = false; });
 
+      // Compile materials before interaction, including meshes first revealed by zoom.
+      stage('shader-warmup');
+      await renderer.compileAsync(scene, camera);
+      // Upload geometry outside the first view too, so the first zoom does not do it.
+      const culling = [];
+      scene.traverse(object => {
+        if (object.geometry) { culling.push([object, object.frustumCulled]); object.frustumCulled = false; }
+      });
+      try {
+        renderer.shadowMap.needsUpdate = true;
+        composer.render();
+      } finally {
+        for (const [object, enabled] of culling) object.frustumCulled = enabled;
+      }
+      if (compactDevice) nextShadowFrame = 0.1;
+
       // 8. Start Render Loop
       animate();
       canvas.dataset.sceneReady = 'true';
@@ -320,6 +339,7 @@
         fog: false, depthWrite: false
       }));
       stars.renderOrder = -4;
+      skyStars = stars;
       scene.add(stars);
     }
 
@@ -1479,6 +1499,8 @@
       updateCinematicCamera(time, dt, performance.now());
       controls.update(dt);
       if (cosmicSky) cosmicSky.update(time, camera);
+      if (accretionDisk) accretionDisk.update(reducedMotion ? 0 : time, camera,
+        window.innerHeight * renderer.getPixelRatio());
       if (time >= nextAudioFrame) {
         nextAudioFrame = time + 0.05;
         camera.getWorldDirection(audioForward);
@@ -1496,7 +1518,8 @@
         }
       }
       // One conservative downgrade for sustained slow frames, excluding hidden tabs.
-      if (!qualityAdjusted && time > 4 && !document.hidden && frameDelta < 0.15) {
+      if (!qualityAdjusted && time > 4 && !document.hidden && frameDelta < 0.15
+          && !cameraHeld && performance.now() >= cameraResumeAt) {
         frameSum += frameDelta;
         if (++frameSamples >= 180) {
           if (frameSum / frameSamples > 0.034) {
@@ -1505,6 +1528,8 @@
           }
           qualityAdjusted = true;
         }
+      } else if (cameraHeld || performance.now() < cameraResumeAt) {
+        frameSum = 0; frameSamples = 0;
       }
       animateIslandLife(time, dt);
       animatePondLife(time, dt);
@@ -1666,7 +1691,7 @@
           new URL('./forest-details.js', document.baseURI).href,
           new URL('./swarm-patterns.js', document.baseURI).href,
           new URL('./cosmic-sky.js', document.baseURI).href,
-          new URL('./accretion-disk.js', document.baseURI).href,
+          new URL('./black-hole.js', document.baseURI).href,
           new URL('./firefly-avoidance.js', document.baseURI).href];
         const responses = await Promise.all(sources.map(url => fetch(url, { cache: 'no-store' })));
         if (responses.every(response => response.ok)) {
