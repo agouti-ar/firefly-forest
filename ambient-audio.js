@@ -100,7 +100,7 @@ async function seamlessLoop(engine, buffer, seconds) {
   return output;
 }
 function startRecordedLoop(buffer, targetLevel, position, offset = 0, reference = 23, night = false) {
-  const source = context.createBufferSource(), gain = context.createGain(), stereo = spatialNode(position, reference, 0.85);
+  const source = context.createBufferSource(), gain = context.createGain(), stereo = spatialNode(position, reference, night ? 0.7 : 1.1);
   const fade = context.createGain(), air = context.createBiquadFilter(), shelf = context.createBiquadFilter();
   air.type = 'lowpass'; air.frequency.value = night ? 6500 : 12000;
   shelf.type = 'highshelf'; shelf.frequency.value = 2800; shelf.gain.value = night ? -4.5 : 0;

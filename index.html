@@ -142,13 +142,15 @@
     let petals, owlHead, owlEyes, waterFrame = 0;
     const owlWings = [];
     let owlTorso, moon;
-    const audioForward = new THREE.Vector3(), audioUp = new THREE.Vector3();
+    const audioForward = new THREE.Vector3(), audioUp = new THREE.Vector3(), audioPosition = new THREE.Vector3();
+    const audioRotation = new THREE.Quaternion();
     let nextAudioFrame = 0;
     let cameraHeld = false, cameraResumeAt = 0;
     const overviewTarget = new THREE.Vector3(0, 1, 0);
     let overviewRadius = 56, overviewTheta = Math.PI / 4;
     let returnToOverview = false, cameraReturn = null;
     let overviewPolar = 1.08, zoomReturnPose = null, gestureStartView = null, inspectionAnchor = null;
+    let cinematicTime = 0;
     let frameSum = 0, frameSamples = 0, qualityAdjusted = false;
     const orbitOffset = new THREE.Vector3();
     const orbitSpherical = new THREE.Spherical();
@@ -237,7 +239,8 @@
           orbitOffset.copy(camera.position).sub(controls.target);
           orbitSpherical.setFromVector3(orbitOffset);
           overviewTheta = orbitSpherical.theta; overviewRadius = orbitSpherical.radius;
-          overviewPolar = orbitSpherical.phi - Math.sin(clock.elapsedTime * 0.08) * 0.035;
+          overviewPolar = orbitSpherical.phi;
+          cinematicTime = 0;
           returnToOverview = false;
         }
       });
@@ -1408,13 +1411,17 @@
             const drift = new THREE.Vector3(Math.sin(elapsed * 0.65) * amplitude,
               Math.sin(elapsed * 0.47) * amplitude * 0.65, Math.sin(elapsed * 0.3) * amplitude * 0.25)
               .applyQuaternion(camera.quaternion);
+            drift.multiplyScalar(THREE.MathUtils.smoothstep((cameraResumeAt - now) / 1000, 0, 1));
             camera.position.copy(inspectionAnchor.position).add(drift);
             controls.target.copy(inspectionAnchor.target);
           }
         }
         return;
       }
-      const polar = THREE.MathUtils.clamp(overviewPolar + Math.sin(time * 0.08) * 0.035,
+      if (!returnToOverview) cinematicTime += dt;
+      const phase = cinematicTime;
+      const polar = THREE.MathUtils.clamp(overviewPolar + Math.sin(phase * 0.08) * 0.035
+        + Math.sin(phase * 0.16) * 0.018,
         0.08, (controls.maxPolarAngle || 1.43) - 0.01);
       orbitOffset.copy(camera.position).sub(controls.target);
       orbitSpherical.setFromVector3(orbitOffset);
@@ -1436,14 +1443,22 @@
           overviewTarget.copy(cameraReturn.destination.target);
           overviewRadius = cameraReturn.destination.spherical.radius;
           overviewTheta = cameraReturn.destination.spherical.theta;
-          overviewPolar = cameraReturn.destination.spherical.phi - Math.sin(time * 0.08) * 0.035;
+          overviewPolar = cameraReturn.destination.spherical.phi;
+          cinematicTime = 0;
           returnToOverview = false; cameraReturn = null; zoomReturnPose = null; inspectionAnchor = null;
         }
       } else {
         inspectionAnchor = null;
         overviewTheta += dt * 0.066 * (1 - Math.cos(overviewTheta - Math.PI / 4) * 0.12);
         controls.target.copy(overviewTarget);
-        orbitSpherical.set(overviewRadius, polar, overviewTheta);
+        controls.target.x += Math.sin(phase * 0.12) * 0.28;
+        controls.target.y += (1 - Math.cos(phase * 0.18)) * 0.1;
+        controls.target.z += Math.sin(phase * 0.14) * 0.28;
+        // Keep the established overview as the nearest automatic framing so glyphs fit.
+        const radiusFactor = 1 + (1 - Math.cos(phase * 0.11)) * (compactDevice ? 0.035 : 0.055)
+          + Math.pow(Math.sin(phase * 0.23), 2) * (compactDevice ? 0.006 : 0.01);
+        orbitSpherical.set(THREE.MathUtils.clamp(overviewRadius * radiusFactor,
+          controls.minDistance || 10, controls.maxDistance || 180), polar, overviewTheta);
       }
       orbitOffset.setFromSpherical(orbitSpherical);
       camera.position.copy(controls.target).add(orbitOffset);
@@ -1504,9 +1519,11 @@
       if (time >= nextAudioFrame) {
         nextAudioFrame = time + 0.05;
         camera.getWorldDirection(audioForward);
-        audioUp.set(0, 1, 0).applyQuaternion(camera.quaternion);
+        camera.getWorldPosition(audioPosition);
+        camera.getWorldQuaternion(audioRotation);
+        audioUp.set(0, 1, 0).applyQuaternion(audioRotation);
         window.dispatchEvent(new CustomEvent('forest-listener', { detail: {
-          position: camera.position.toArray(), forward: audioForward.toArray(), up: audioUp.toArray()
+          position: audioPosition.toArray(), forward: audioForward.toArray(), up: audioUp.toArray()
         } }));
       }
       if (moon) {
@@ -1710,6 +1727,6 @@
     watchLocalSource();
   }
 </script>
-<script type="module" src="./ambient-audio.js?v=mobile-20261025"></script>
+<script type="module" src="./ambient-audio.js?v=cinematic-audio-v2"></script>
 </body>
 </html>
