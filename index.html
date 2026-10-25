@@ -65,6 +65,10 @@
     .night-audio-toggle:focus-visible { outline: 2px solid #9fe5df; outline-offset: 3px; }
     .night-audio-toggle[aria-pressed="true"] { border-color: #85c9bf; }
     .night-audio-toggle:disabled { opacity: 0.6; cursor: wait; }
+    .sky-sign { position: fixed; top: 22px; left: 50%; transform: translateX(-50%);
+      color: #c0ebdf; font: 12px system-ui, sans-serif; letter-spacing: 0.24em;
+      text-transform: uppercase; pointer-events: none; opacity: 0; transition: opacity 0.6s;
+      text-shadow: 0 1px 12px #3d8c8b; }
   </style>
 
   <!-- Three.js & OrbitControls via CDN Import Map -->
@@ -80,6 +84,7 @@
 <body>
   <!-- Clean, full-screen WebGL viewport without UI overlay -->
   <canvas id="webgl-canvas"></canvas>
+  <output id="sky-sign" class="sky-sign" aria-live="polite"></output>
 
   <script type="module">
     import * as THREE from 'three';
@@ -89,7 +94,10 @@
     import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
     import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
     import { makeForestDetails } from './forest-details.js';
+    import { createZodiacPatterns } from './swarm-patterns.js';
+    import { createTreeAvoidance } from './firefly-avoidance.js';
     const details = makeForestDetails(THREE);
+    const treeAvoidance = createTreeAvoidance(THREE);
 
     /**
      * Application Singletons & State
@@ -116,8 +124,15 @@
     const koi = [], lilyPads = [], frogs = [], waterRipples = [];
     const swarmCount = compactDevice ? 100 : 170;
     const swarmColor = new THREE.Color(0xbdffe8);
-    const swarmCenter = new THREE.Vector3(0, 17.2, 0);
+    const swarmCenter = new THREE.Vector3(0, 19.3, 0);
     const swarmTarget = new THREE.Vector3();
+    const fishPoints = new Float32Array(swarmCount * 2);
+    for (let i = 0; i < swarmCount; i++) {
+      const point = fishFigurePoint(i, swarmCount);
+      fishPoints[i * 2] = point.x; fishPoints[i * 2 + 1] = point.y;
+    }
+    const swarmPatterns = [{ name: 'Koi', points: fishPoints }, ...createZodiacPatterns(swarmCount)];
+    let skyLabel, moonLight;
     let waterEnvironmentTarget;
     let petals, owlHead, owlEyes, waterFrame = 0;
     const owlWings = [];
@@ -126,6 +141,7 @@
     const overviewTarget = new THREE.Vector3(0, 1, 0);
     let overviewRadius = 56, overviewTheta = Math.PI / 4;
     let returnToOverview = false, cameraReturn = null;
+    let overviewPolar = 1.08, zoomReturnPose = null, gestureStartView = null, inspectionAnchor = null;
     let frameSum = 0, frameSamples = 0, qualityAdjusted = false;
     const orbitOffset = new THREE.Vector3();
     const orbitSpherical = new THREE.Spherical();
@@ -135,6 +151,12 @@
      */
     function init() {
       const canvas = document.getElementById('webgl-canvas');
+      const stage = name => {
+        canvas.dataset.initStage = name;
+        if (new URLSearchParams(location.search).has('renderCheck')) console.info('scene-stage', name);
+      };
+      stage('scene');
+      skyLabel = document.getElementById('sky-sign');
 
       // 1. Night sky and atmospheric depth
       scene = new THREE.Scene();
@@ -142,6 +164,7 @@
       moon = details.createMoon();
       moon.update(0);
       scene.add(moon.mesh);
+      scene.add(details.createNebula());
       scene.fog = new THREE.FogExp2(0x101e36, 0.009);
 
       // 2. Camera Setup (Patch 4: Isometric angle overlooking the diorama)
@@ -164,6 +187,7 @@
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      stage('renderer');
 
       // 4. OrbitControls Setup (Patch 4: Centered isometric rotation)
       controls = new OrbitControls(camera, renderer.domElement);
@@ -177,14 +201,35 @@
       controls.dampingFactor = 0.05;
       controls.addEventListener('start', () => {
         cameraHeld = true;
-        returnToOverview = true;
+        gestureStartView = snapshotCamera();
         cameraReturn = null;
+        inspectionAnchor = null;
+      });
+      controls.addEventListener('change', () => {
+        if (cameraHeld && gestureStartView && !zoomReturnPose
+          && Math.abs(camera.position.distanceTo(controls.target) - gestureStartView.spherical.radius) > 0.02) {
+          zoomReturnPose = gestureStartView;
+          returnToOverview = true;
+        }
       });
       controls.addEventListener('end', () => {
         cameraHeld = false;
         cameraResumeAt = performance.now() + 5000;
         cameraReturn = null;
+        inspectionAnchor = { ...snapshotCamera(), started: performance.now() };
+        if (!zoomReturnPose) {
+          overviewTarget.copy(controls.target);
+          orbitOffset.copy(camera.position).sub(controls.target);
+          orbitSpherical.setFromVector3(orbitOffset);
+          overviewTheta = orbitSpherical.theta; overviewRadius = orbitSpherical.radius;
+          overviewPolar = orbitSpherical.phi - Math.sin(clock.elapsedTime * 0.08) * 0.035;
+          returnToOverview = false;
+        }
       });
+      canvas.addEventListener('wheel', () => {
+        if (!zoomReturnPose) zoomReturnPose = snapshotCamera();
+        returnToOverview = true;
+      }, { capture: true, passive: true });
 
       // 5. Build Diorama Entities
       setupLighting();
@@ -194,8 +239,10 @@
       createGroundMist();
       createIslandLife();
       createPondLife();
+      stage('entities');
       details.setAnisotropy(Math.min(compactDevice ? 4 : 8, renderer.capabilities.getMaxAnisotropy()));
       captureWaterReflections();
+      stage('reflections');
 
       // 6. Post-processing Pipeline: UnrealBloomPass & OutputPass (Calibrated for crisp diorama)
       const renderScene = new RenderPass(scene, camera);
@@ -211,6 +258,7 @@
       composer.addPass(renderScene);
       composer.addPass(bloomPass);
       composer.addPass(outputPass);
+      stage('postprocessing');
 
       // 7. Responsive Resize Handling
       window.addEventListener('resize', onWindowResize, false);
@@ -230,6 +278,8 @@
 
       // 8. Start Render Loop
       animate();
+      canvas.dataset.sceneReady = 'true';
+      stage('ready');
     }
 
     /**
@@ -279,6 +329,7 @@
 
       // 2. Moonlight and soft directional shadows
       const sunsetLight = new THREE.DirectionalLight(0xb8d7ff, 2.2);
+      moonLight = sunsetLight;
       sunsetLight.position.set(-18, 24, -16);
       sunsetLight.castShadow = true;
       sunsetLight.shadow.mapSize.width = compactDevice ? 1024 : 2048;
@@ -508,6 +559,7 @@
       trunk.castShadow = true;
       trunk.receiveShadow = true;
       treeGroup.add(trunk);
+      treeAvoidance.addTrunk(trunk, visibleTrunkHeight, 0.8 * scale, 0.25 * scale);
 
       // Blooming pink cherry blossom foliage clusters
       const leafMat = new THREE.MeshStandardMaterial({
@@ -525,7 +577,7 @@
         const vertices = leafGeo.attributes.position;
         for (let v = 0; v < vertices.count; v++) {
           const x = vertices.getX(v), y = vertices.getY(v), z = vertices.getZ(v);
-          const variation = 1 + Math.sin(x * 3.1 + y * 2.3) * Math.cos(z * 3.4) * 0.055;
+          const variation = 1 + Math.sin(x * 3.1 + y * 2.3) * Math.cos(z * 3.4) * 0.03;
           vertices.setXYZ(v, x * variation, y * variation, z * variation);
         }
         leafGeo.computeVertexNormals();
@@ -548,6 +600,7 @@
         leaves.castShadow = true;
         leaves.receiveShadow = true;
         treeGroup.add(leaves);
+        treeAvoidance.addCanopy(leaves);
         crowns.push({ mesh: leaves, rest: leaves.position.clone(),
           phase: Math.random() * Math.PI * 2, amplitude: 0.06 * scale });
       }
@@ -558,6 +611,7 @@
       canopyCore.position.y = trunkHeight * 0.87;
       canopyCore.castShadow = canopyCore.receiveShadow = true;
       treeGroup.add(canopyCore);
+      treeAvoidance.addCanopy(canopyCore);
       return treeGroup;
     }
 
@@ -953,9 +1007,10 @@
 
       const padMaterial = new THREE.MeshStandardMaterial({ color: 0x4e7945,
         roughness: 0.55, side: THREE.DoubleSide });
-      for (let i = 0; i < 14; i++) {
+      const padCount = compactDevice ? 16 : 20;
+      for (let i = 0; i < padCount; i++) {
         const pad = new THREE.Group();
-        const angle = 0.25 + i * Math.PI * 2 / 14;
+        const angle = 0.25 + i * Math.PI * 2 / padCount;
         const point = pondPoint(angle, i % 2 ? 0.19 : 0.81);
         const radius = 0.4 + (i % 3) * 0.1;
         const shape = new THREE.Shape();
@@ -969,7 +1024,7 @@
         leaf.rotation.z = i * 0.7;
         leaf.receiveShadow = true;
         pad.add(leaf);
-        if (i % 3 === 0) {
+        if (i % 2 === 0) {
           const flower = details.createLilyFlower(compactDevice);
           flower.position.y = 0.045;
           pad.add(flower);
@@ -1020,12 +1075,17 @@
       const hidden = [waterSurface, fireflies, petals, ...mistLayers.map(layer => layer.mesh)];
       const visibility = hidden.map(object => object.visible);
       hidden.forEach(object => { object.visible = false; });
+      const shadowAutoUpdate = renderer.shadowMap.autoUpdate;
+      renderer.shadowMap.autoUpdate = false;
+      renderer.shadowMap.needsUpdate = true;
       try {
         capture.update(renderer, scene);
         waterSurface.material.envMap = waterEnvironmentTarget.texture;
         waterSurface.material.envMapIntensity = 0.45;
         waterSurface.material.needsUpdate = true;
       } finally {
+        renderer.shadowMap.autoUpdate = shadowAutoUpdate;
+        renderer.shadowMap.needsUpdate = true;
         hidden.forEach((object, i) => { object.visible = visibility[i]; });
       }
     }
@@ -1231,14 +1291,21 @@
       const fireflyPositions = new Float32Array(fireflyCount * 3);
       const fireflyColors = new Float32Array(fireflyCount * 3);
       fireflyData = [];
+      treeAvoidance.update();
 
       for (let i = 0; i < fireflyCount; i++) {
         // Confined across island radius (up to 15.5 units)
         const angle = Math.random() * Math.PI * 2;
         const radius = Math.random() * 15.5;
-        const x = Math.cos(angle) * radius;
-        const z = Math.sin(angle) * radius;
-        const y = 0.8 + Math.random() * 7.5; // Hovering above island turf
+        let x = Math.cos(angle) * radius;
+        let z = Math.sin(angle) * radius;
+        let y = 0.8 + Math.random() * 7.5;
+        for (let attempt = 0; attempt < 30 && !treeAvoidance.isFree(x, y, z); attempt++) {
+          const angle = Math.random() * Math.PI * 2, radius = Math.sqrt(Math.random()) * 15.5;
+          x = Math.cos(angle) * radius; z = Math.sin(angle) * radius;
+          y = 0.8 + Math.random() * 7.5;
+        }
+        while (!treeAvoidance.isFree(x, y, z)) y += 0.5;
 
         fireflyPositions[i * 3] = x;
         fireflyPositions[i * 3 + 1] = y;
@@ -1287,26 +1354,57 @@
     /**
      * Viewport Resize Event Handler
      */
+    function snapshotCamera() {
+      return { position: camera.position.clone(), target: controls.target.clone(),
+        spherical: new THREE.Spherical().setFromVector3(camera.position.clone().sub(controls.target)) };
+    }
+
     function updateCinematicCamera(time, dt, now) {
-      if (reducedMotion || cameraHeld || now < cameraResumeAt) return;
-      const polar = 1.08 + Math.sin(time * 0.08) * 0.08;
+      if (reducedMotion || cameraHeld) return;
+      if (now < cameraResumeAt) {
+        if (inspectionAnchor) {
+          const elapsed = (now - inspectionAnchor.started) / 1000;
+          if (elapsed < 0.3) {
+            inspectionAnchor = { ...snapshotCamera(), started: inspectionAnchor.started };
+          } else {
+            const amplitude = Math.min(0.13, inspectionAnchor.spherical.radius * 0.006);
+            const drift = new THREE.Vector3(Math.sin(elapsed * 0.65) * amplitude,
+              Math.sin(elapsed * 0.47) * amplitude * 0.65, Math.sin(elapsed * 0.3) * amplitude * 0.25)
+              .applyQuaternion(camera.quaternion);
+            camera.position.copy(inspectionAnchor.position).add(drift);
+            controls.target.copy(inspectionAnchor.target);
+          }
+        }
+        return;
+      }
+      const polar = THREE.MathUtils.clamp(overviewPolar + Math.sin(time * 0.08) * 0.035,
+        0.08, (controls.maxPolarAngle || 1.43) - 0.01);
       orbitOffset.copy(camera.position).sub(controls.target);
       orbitSpherical.setFromVector3(orbitOffset);
       if (returnToOverview) {
         if (!cameraReturn) {
           cameraReturn = { start: now, spherical: orbitSpherical.clone(), target: controls.target.clone() };
-          cameraReturn.turn = Math.atan2(Math.sin(overviewTheta - orbitSpherical.theta),
-            Math.cos(overviewTheta - orbitSpherical.theta));
+          cameraReturn.destination = zoomReturnPose || { target: overviewTarget.clone(),
+            spherical: new THREE.Spherical(overviewRadius, polar, overviewTheta) };
+          cameraReturn.turn = Math.atan2(Math.sin(cameraReturn.destination.spherical.theta - orbitSpherical.theta),
+            Math.cos(cameraReturn.destination.spherical.theta - orbitSpherical.theta));
         }
         const progress = THREE.MathUtils.clamp((now - cameraReturn.start) / 3500, 0, 1);
         const ease = THREE.MathUtils.smootherstep(progress, 0, 1);
-        controls.target.copy(cameraReturn.target).lerp(overviewTarget, ease);
-        orbitSpherical.radius = THREE.MathUtils.lerp(cameraReturn.spherical.radius, overviewRadius, ease);
-        orbitSpherical.phi = THREE.MathUtils.lerp(cameraReturn.spherical.phi, polar, ease);
+        controls.target.copy(cameraReturn.target).lerp(cameraReturn.destination.target, ease);
+        orbitSpherical.radius = THREE.MathUtils.lerp(cameraReturn.spherical.radius, cameraReturn.destination.spherical.radius, ease);
+        orbitSpherical.phi = THREE.MathUtils.lerp(cameraReturn.spherical.phi, cameraReturn.destination.spherical.phi, ease);
         orbitSpherical.theta = cameraReturn.spherical.theta + cameraReturn.turn * ease;
-        if (progress === 1) { returnToOverview = false; cameraReturn = null; }
+        if (progress === 1) {
+          overviewTarget.copy(cameraReturn.destination.target);
+          overviewRadius = cameraReturn.destination.spherical.radius;
+          overviewTheta = cameraReturn.destination.spherical.theta;
+          overviewPolar = cameraReturn.destination.spherical.phi - Math.sin(time * 0.08) * 0.035;
+          returnToOverview = false; cameraReturn = null; zoomReturnPose = null; inspectionAnchor = null;
+        }
       } else {
-        overviewTheta += dt * 0.048;
+        inspectionAnchor = null;
+        overviewTheta += dt * 0.058;
         controls.target.copy(overviewTarget);
         orbitSpherical.set(overviewRadius, polar, overviewTheta);
       }
@@ -1344,7 +1442,14 @@
       const time = clock.elapsedTime;
       updateCinematicCamera(time, dt, performance.now());
       controls.update(dt);
-      if (moon) moon.update(time);
+      if (moon) {
+        moon.update(time);
+        if (moonLight) {
+          moonLight.position.set(moon.mesh.position.x * 0.11,
+            24 + Math.sin(time * 0.008) * 3, moon.mesh.position.z * 0.11);
+          moonLight.intensity = 1.7 + moon.illumination * 0.5;
+        }
+      }
       // One conservative downgrade for sustained slow frames, excluding hidden tabs.
       if (!qualityAdjusted && time > 4 && !document.hidden && frameDelta < 0.15) {
         frameSum += frameDelta;
@@ -1370,7 +1475,7 @@
           const radius = layer.radius + travel * 3;
           layer.mesh.position.set(Math.cos(layer.angle) * radius + Math.sin(time * 0.12) * 0.4,
             -0.6 - travel * 3.5, Math.sin(layer.angle) * radius);
-          layer.mesh.material.opacity = Math.sin(travel * Math.PI) * 0.22;
+          layer.mesh.material.opacity = Math.sin(travel * Math.PI) * 0.26;
           continue;
         }
         layer.mesh.position.set(layer.x + Math.sin(time * 0.09 + layer.phase) * 1.5,
@@ -1384,6 +1489,7 @@
         mesh.position.z = rest.z + Math.sin(time * 0.63 + phase) * amplitude * 0.6 * motion;
         mesh.rotation.z = Math.sin(time * 0.8 + phase) * 0.012 * motion;
       }
+      treeAvoidance.update();
       if (waterSurface && ++waterFrame % (compactDevice ? 3 : 2) === 0) {
         waterSurface.material.normalMap.offset.set(time * 0.006, time * 0.003);
         waterSurface.material.clearcoatNormalMap.offset.set(-time * 0.009, time * 0.006);
@@ -1402,10 +1508,21 @@
       if (fireflies && fireflyData && fireflyData.length) {
         const positions = fireflies.geometry.attributes.position.array;
         const colors = fireflies.geometry.attributes.color.array;
-        // A rare, camera-facing ghost koi emerges, then dissolves back into the grove.
-        const cycle = time % 64;
-        const formation = reducedMotion ? 0 : THREE.MathUtils.smoothstep(cycle, 12, 19)
-          * (1 - THREE.MathUtils.smoothstep(cycle, 25, 32));
+        // One shared swarm: koi introduction, then twelve zodiac glyphs.
+        const cycle = time % 126;
+        const formation = reducedMotion ? 0 : THREE.MathUtils.smoothstep(cycle, 4, 12)
+          * (1 - THREE.MathUtils.smoothstep(cycle, 118, 126));
+        const patternIndex = cycle < 22 ? 0 : Math.min(12, 1 + Math.floor((cycle - 22) / 8));
+        const pattern = swarmPatterns[patternIndex];
+        const previous = swarmPatterns[Math.max(0, patternIndex - 1)];
+        const morph = patternIndex ? THREE.MathUtils.smoothstep((cycle - 22) % 8, 0, 2.5) : 1;
+        if (skyLabel) {
+          const screen = swarmCenter.clone().project(camera);
+          const name = patternIndex ? pattern.name : '';
+          if (skyLabel.textContent !== name) skyLabel.textContent = name;
+          skyLabel.style.opacity = patternIndex && Math.abs(screen.x) < 1 && Math.abs(screen.y) < 1
+            ? String(formation * morph * 0.8) : '0';
+        }
 
         for (let i = 0; i < fireflyCount; i++) {
           const data = fireflyData[i];
@@ -1416,7 +1533,9 @@
           const gathering = data.figure ? formation : 0;
           swarmTarget.copy(data.home);
           if (gathering > 0) {
-            swarmTarget.copy(data.figure).applyQuaternion(camera.quaternion).add(swarmCenter);
+            swarmTarget.set(THREE.MathUtils.lerp(previous.points[i * 2], pattern.points[i * 2], morph),
+              THREE.MathUtils.lerp(previous.points[i * 2 + 1], pattern.points[i * 2 + 1], morph), 0)
+              .applyQuaternion(camera.quaternion).add(swarmCenter);
             swarmTarget.lerp(data.home, 1 - gathering);
           }
           const spring = THREE.MathUtils.lerp(0.22, 3.2, gathering);
@@ -1427,6 +1546,7 @@
             + Math.cos(time * data.speed * 0.7 + data.phaseY) * 0.6 * wander) * dt;
           velocity.z += ((swarmTarget.z - z) * spring
             + Math.sin(time * data.speed * 0.5 + data.phaseZ) * 0.85 * wander) * dt;
+          treeAvoidance.steer(x, y, z, velocity, dt, gathering > 0);
           if (cursorHit) {
             const dx = x - cursorWorld.x, dy = y - cursorWorld.y, dz = z - cursorWorld.z;
             const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
@@ -1442,6 +1562,7 @@
           positions[i3] += velocity.x * dt;
           positions[i3 + 1] = Math.max(0.7, y + velocity.y * dt);
           positions[i3 + 2] += velocity.z * dt;
+          treeAvoidance.resolve(positions, i3, velocity);
           const pulse = 1.5 + Math.pow(0.5 + 0.5 * Math.sin(time * data.speed * 1.8 + data.phaseY), 3) * 3;
           colors[i3] = THREE.MathUtils.lerp(data.color.r, swarmColor.r, gathering) * pulse;
           colors[i3 + 1] = THREE.MathUtils.lerp(data.color.g, swarmColor.g, gathering) * pulse;
@@ -1471,7 +1592,9 @@
     async function watchLocalSource() {
       try {
         const sources = [location.href, new URL('./ambient-audio.js', document.baseURI).href,
-          new URL('./forest-details.js', document.baseURI).href];
+          new URL('./forest-details.js', document.baseURI).href,
+          new URL('./swarm-patterns.js', document.baseURI).href,
+          new URL('./firefly-avoidance.js', document.baseURI).href];
         const responses = await Promise.all(sources.map(url => fetch(url, { cache: 'no-store' })));
         if (responses.every(response => response.ok)) {
           const source = (await Promise.all(responses.map(response => response.text()))).join('\n');

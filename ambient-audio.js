@@ -27,6 +27,75 @@ const waves = '<path d="M15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/>';
 const mute = '<path d="m16 9 5 6m0-6-5 6"/>';
 let context, master, splashBuffer, scheduler, enabled = false;
 let cricketTimes = [], frogTimes = [];
+let naturalReady = false, naturalBuffers = {}, nextOwl = 0;
+
+function rms(buffer) {
+  const data = buffer.getChannelData(0);
+  let sum = 0, samples = 0;
+  for (let i = 0; i < data.length; i += 97) { sum += data[i] * data[i]; samples++; }
+  return Math.sqrt(sum / Math.max(1, samples));
+}
+function seamlessLoop(engine, buffer, seconds) {
+  const rate = buffer.sampleRate;
+  const available = Math.min(buffer.length, Math.floor((seconds + 2) * rate));
+  const overlap = Math.min(Math.floor(rate * 2), Math.floor(available / 6));
+  const length = available - overlap;
+  const output = engine.createBuffer(buffer.numberOfChannels, length, rate);
+  for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
+    const input = buffer.getChannelData(channel), data = output.getChannelData(channel);
+    for (let i = 0; i < length; i++) {
+      if (i < length - overlap) data[i] = input[i + overlap];
+      else {
+        const t = (i - length + overlap) / overlap;
+        data[i] = input[i + overlap] * Math.cos(t * Math.PI / 2)
+          + input[i - length + overlap] * Math.sin(t * Math.PI / 2);
+      }
+    }
+  }
+  return output;
+}
+function startRecordedLoop(buffer, targetLevel, pan) {
+  const source = context.createBufferSource(), gain = context.createGain(), stereo = context.createStereoPanner();
+  source.buffer = buffer; source.loop = true;
+  stereo.pan.value = pan;
+  gain.gain.setValueAtTime(0, context.currentTime);
+  gain.gain.linearRampToValueAtTime(Math.min(2.5, targetLevel / Math.max(0.015, rms(buffer))), context.currentTime + 2);
+  source.connect(gain).connect(stereo).connect(master);
+  source.start();
+}
+async function loadRecordings(engine) {
+  panel.dataset.recordings = 'loading';
+  try {
+    const buffers = await Promise.all(['forest-night', 'stream', 'owl'].map(async name => {
+      const response = await fetch(new URL(`./assets/audio/${name}.mp3`, import.meta.url));
+      if (!response.ok) throw Error('Audio recording unavailable');
+      const decoded = await engine.decodeAudioData(await response.arrayBuffer());
+      return name === 'owl' ? decoded : seamlessLoop(engine, decoded, name === 'stream' ? 36 : 60);
+    }));
+    if (context !== engine || engine.state === 'closed') return;
+    naturalBuffers = { night: buffers[0], stream: buffers[1], owl: buffers[2] };
+    startRecordedLoop(naturalBuffers.night, 0.07, -0.08);
+    startRecordedLoop(naturalBuffers.stream, 0.026, 0.3);
+    naturalReady = true;
+    panel.dataset.recordings = 'ready';
+  } catch {
+    if (context === engine) panel.dataset.recordings = 'fallback';
+  }
+}
+function owlCall(now) {
+  if (naturalBuffers.owl) {
+    const source = context.createBufferSource(), gain = context.createGain(), stereo = context.createStereoPanner();
+    source.buffer = naturalBuffers.owl;
+    stereo.pan.value = -0.35;
+    gain.gain.value = Math.min(1.2, 0.07 / Math.max(0.02, rms(source.buffer)));
+    source.connect(gain).connect(stereo).connect(master);
+    source.onended = () => { source.disconnect(); gain.disconnect(); stereo.disconnect(); };
+    source.start(now + 0.02);
+  } else {
+    voice(430, now + 0.02, 0.32, 0.055, -0.35, 360);
+    voice(395, now + 0.5, 0.85, 0.07, -0.35, 335);
+  }
+}
 
 function updateControl() {
   toggle.innerHTML = `<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">${speaker}${enabled ? waves : mute}</svg><span>Sound ${enabled ? 'on' : 'off'}</span>`;
@@ -84,17 +153,22 @@ function scheduleNight() {
   if (!enabled || document.hidden || context.state !== 'running') return;
   const now = context.currentTime;
   for (let actor = 0; actor < cricketTimes.length; actor++) {
+    if (naturalReady) break;
     if (now < cricketTimes[actor]) continue;
     const frequency = [2900, 3550, 4200][actor] + Math.random() * 180;
     const pan = [-0.65, 0.4, 0.05][actor];
     const pulses = 6 + Math.floor(Math.random() * 3);
+    let cursor = now + 0.025;
     for (let i = 0; i < pulses; i++) {
-      voice(frequency, now + 0.025 + i * 0.073, 0.057,
-        0.065 + Math.random() * 0.025, pan, frequency * 0.985);
+      const pitch = frequency * (0.985 + Math.random() * 0.03);
+      const duration = 0.04 + Math.random() * 0.035;
+      voice(pitch, cursor, duration, 0.045 + Math.random() * 0.035, pan, pitch * 0.98);
+      cursor += duration + 0.016 + Math.random() * 0.04;
     }
-    cricketTimes[actor] = now + pulses * 0.073 + 0.1 + Math.random() * 0.25;
+    cricketTimes[actor] = cursor + 0.04 + Math.random() * 0.3;
   }
   for (let actor = 0; actor < frogTimes.length; actor++) {
+    if (naturalReady) break;
     if (now < frogTimes[actor]) continue;
     const frequency = [145, 205, 115][actor];
     const pan = [-0.5, 0.55, 0.1][actor];
@@ -103,6 +177,7 @@ function scheduleNight() {
     }
     frogTimes[actor] = now + 4 + actor * 0.7 + Math.random() * 2;
   }
+  if (now >= nextOwl) { owlCall(now); nextOwl = now + 35 + Math.random() * 20; }
 }
 
 function createAmbience() {
@@ -145,6 +220,9 @@ function createAmbience() {
   splashBuffer = context.createBuffer(1, context.sampleRate, context.sampleRate);
   const splashSamples = splashBuffer.getChannelData(0);
   for (let i = 0; i < splashSamples.length; i++) splashSamples[i] = Math.random() * 2 - 1;
+  naturalReady = false;
+  naturalBuffers = {};
+  loadRecordings(context);
 }
 
 toggle.addEventListener('click', async () => {
@@ -159,6 +237,7 @@ toggle.addEventListener('click', async () => {
       const now = context.currentTime;
       cricketTimes = [now, now + 0.2, now + 0.4];
       frogTimes = [now + 0.8, now + 2.1, now + 3.4];
+      nextOwl = now + 16;
       scheduleNight();
       scheduler = setInterval(scheduleNight, 100);
     }
@@ -178,7 +257,7 @@ volumeControl.addEventListener('input', () => {
 window.addEventListener('pond-splash', event => splash(event.detail?.strength ?? 1,
   (event.detail?.x ?? 0) / 22));
 window.addEventListener('pond-frog', () => {
-  if (enabled && context?.state === 'running' && !document.hidden) {
+  if (!naturalReady && enabled && context?.state === 'running' && !document.hidden) {
     voice(180, context.currentTime + 0.02, 0.25, 0.1, 0, 105);
   }
 });
