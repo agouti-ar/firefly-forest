@@ -78,7 +78,7 @@ function rms(buffer) {
   for (let i = 0; i < data.length; i += 97) { sum += data[i] * data[i]; samples++; }
   return Math.sqrt(sum / Math.max(1, samples));
 }
-function seamlessLoop(engine, buffer, seconds) {
+async function seamlessLoop(engine, buffer, seconds) {
   const rate = buffer.sampleRate;
   const available = Math.min(buffer.length, Math.floor((seconds + 2) * rate));
   const overlap = Math.min(Math.floor(rate * 2), Math.floor(available / 6));
@@ -87,6 +87,8 @@ function seamlessLoop(engine, buffer, seconds) {
   for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
     const input = buffer.getChannelData(channel), data = output.getChannelData(channel);
     for (let i = 0; i < length; i++) {
+      // Yield between chunks so preparing long recordings does not block touch/animation.
+      if (i > 0 && i % 65536 === 0) await new Promise(resolve => setTimeout(resolve, 0));
       if (i < length - overlap) data[i] = input[i + overlap];
       else {
         const t = (i - length + overlap) / overlap;

@@ -1,5 +1,13 @@
 export function createTreeAvoidance(THREE) {
   const colliders = [];
+  const cells = new Map(), empty = [];
+  const cellSize = 5;
+  let indexed = false;
+  function nearby(x, z) {
+    const ix = Math.floor(x / cellSize), iz = Math.floor(z / cellSize);
+    if (!indexed || Math.abs(ix) > 32767 || Math.abs(iz) > 32767) return colliders;
+    return cells.get(ix * 65536 + iz) || empty;
+  }
   const scale = new THREE.Vector3();
   const probe = { x: 0, y: 0, z: 0, r: 0, d2: 0, cx: 0, cy: 0, cz: 0 };
   function sample(c, x, y, z) {
@@ -20,7 +28,7 @@ export function createTreeAvoidance(THREE) {
     return probe;
   }
   function isFree(x, y, z) {
-    for (const c of colliders) { const p = sample(c, x, y, z); if (p.d2 < p.r * p.r) return false; }
+    for (const c of nearby(x, z)) { const p = sample(c, x, y, z); if (p.d2 < p.r * p.r) return false; }
     return true;
   }
   return {
@@ -28,15 +36,19 @@ export function createTreeAvoidance(THREE) {
     addCanopy(mesh) {
       mesh.geometry.computeBoundingSphere();
       colliders.push({ type: 'canopy', mesh, center: new THREE.Vector3(), radius: 0 });
+      indexed = false;
     },
     addTrunk(mesh, height, base, tip) {
       colliders.push({ type: 'trunk', mesh, height, base, tip, worldScale: 1,
         start: new THREE.Vector3(), end: new THREE.Vector3(), axis: new THREE.Vector3(), length2: 1 });
+      indexed = false;
     },
     update() {
+      // Reuse buckets to avoid generating garbage on every animation frame.
+      for (const bucket of cells.values()) bucket.length = 0;
       for (const c of colliders) {
         c.mesh.updateWorldMatrix(true, false);
-        c.mesh.getWorldScale(scale);
+        scale.setFromMatrixScale(c.mesh.matrixWorld);
         const worldScale = Math.max(scale.x, scale.y, scale.z);
         if (c.type === 'canopy') {
           c.center.copy(c.mesh.geometry.boundingSphere.center).applyMatrix4(c.mesh.matrixWorld);
@@ -46,11 +58,27 @@ export function createTreeAvoidance(THREE) {
           c.end.set(0, c.height / 2, 0).applyMatrix4(c.mesh.matrixWorld);
           c.axis.copy(c.end).sub(c.start); c.length2 = c.axis.lengthSq(); c.worldScale = worldScale;
         }
+        const padding = 1.12; // Includes the entire 1.1-unit steering shell.
+        const radius = c.type === 'canopy' ? c.radius + padding
+          : Math.max(c.base, c.tip) * worldScale + 0.3 + padding;
+        const a = c.type === 'canopy' ? c.center : c.start;
+        const b = c.type === 'canopy' ? c.center : c.end;
+        const minX = Math.floor((Math.min(a.x, b.x) - radius) / cellSize);
+        const maxX = Math.floor((Math.max(a.x, b.x) + radius) / cellSize);
+        const minZ = Math.floor((Math.min(a.z, b.z) - radius) / cellSize);
+        const maxZ = Math.floor((Math.max(a.z, b.z) + radius) / cellSize);
+        for (let x = minX; x <= maxX; x++) for (let z = minZ; z <= maxZ; z++) {
+          const key = x * 65536 + z;
+          let bucket = cells.get(key);
+          if (!bucket) { bucket = []; cells.set(key, bucket); }
+          bucket.push(c);
+        }
       }
+      indexed = true;
     },
     isFree,
     steer(x, y, z, velocity, dt, ascending) {
-      for (const c of colliders) {
+      for (const c of nearby(x, z)) {
         const p = sample(c, x, y, z), outer = p.r + 1.1;
         if (p.d2 >= outer * outer) continue;
         const distance = Math.max(0.05, Math.sqrt(p.d2));
@@ -64,7 +92,7 @@ export function createTreeAvoidance(THREE) {
       let x = positions[index], y = positions[index + 1], z = positions[index + 2];
       for (let pass = 0; pass < 3; pass++) {
         let changed = false;
-        for (const c of colliders) {
+        for (const c of nearby(x, z)) {
           const p = sample(c, x, y, z);
           if (p.d2 >= p.r * p.r) continue;
           const distance = Math.sqrt(p.d2);
@@ -83,7 +111,7 @@ export function createTreeAvoidance(THREE) {
       // letting a particle remain embedded between two branches.
       y = Math.max(0.7, y);
       for (let pass = 0; pass < 12 && !isFree(x, y, z); pass++) {
-        for (const c of colliders) {
+        for (const c of nearby(x, z)) {
           const p = sample(c, x, y, z);
           if (p.d2 < p.r * p.r) y = Math.max(y, p.cy + p.r + 0.02);
         }

@@ -94,17 +94,19 @@
     import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
     import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
     import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-    import { makeForestDetails } from './forest-details.js';
+    import { makeForestDetails } from './forest-details.js?v=mobile-20261025';
     import { createZodiacPatterns } from './swarm-patterns.js';
-    import { createTreeAvoidance } from './firefly-avoidance.js';
+    import { createTreeAvoidance } from './firefly-avoidance.js?v=mobile-20261025';
     import { createCosmicSky } from './cosmic-sky.js';
+    import { createAccretionDisk } from './accretion-disk.js?v=mobile-20261025';
     const details = makeForestDetails(THREE);
     const treeAvoidance = createTreeAvoidance(THREE);
 
     /**
      * Application Singletons & State
      */
-    let scene, camera, renderer, controls, composer;
+    let scene, camera, renderer, controls, composer, bloomPass, accretionDisk;
+    let nextShadowFrame = 0;
     let islandGroup;
     let fireflyCount, fireflyGeo, fireflyData, fireflies, fireflyMat;
     const clock = new THREE.Clock();
@@ -166,7 +168,7 @@
       // 1. Night sky and atmospheric depth
       scene = new THREE.Scene();
       setupNightSky();
-      moon = details.createMoon();
+      moon = details.createMoon(compactDevice ? 2 : 4);
       moon.update(0);
       scene.add(moon.mesh);
       scene.fog = new THREE.FogExp2(0x101e36, 0.009);
@@ -177,6 +179,7 @@
       overviewRadius = Math.max(56, 29 / (Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * aspect));
       const framing = overviewRadius / Math.hypot(36, 23, 36);
       camera.position.set(36 * framing, 1 + 23 * framing, 36 * framing);
+      if (compactDevice) scene.fog.density *= Math.min(1, 56 / overviewRadius);
 
       // 3. Renderer with ACES Filmic Tone Mapping & Soft Shadows
       renderer = new THREE.WebGLRenderer({
@@ -191,6 +194,7 @@
       renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.shadowMap.enabled = true;
       renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.shadowMap.autoUpdate = !compactDevice;
       stage('renderer');
 
       // 4. OrbitControls Setup (Patch 4: Centered isometric rotation)
@@ -203,6 +207,10 @@
       controls.maxDistance = 180;
       controls.enableDamping = true;
       controls.dampingFactor = 0.05;
+      camera.lookAt(controls.target);
+      accretionDisk = createAccretionDisk(THREE);
+      accretionDisk.place(camera);
+      scene.add(accretionDisk.mesh);
       controls.addEventListener('start', () => {
         cameraHeld = true;
         gestureStartView = snapshotCamera();
@@ -250,7 +258,7 @@
 
       // 6. Post-processing Pipeline: UnrealBloomPass & OutputPass (Calibrated for crisp diorama)
       const renderScene = new RenderPass(scene, camera);
-      const bloomPass = new UnrealBloomPass(
+      bloomPass = new UnrealBloomPass(
         new THREE.Vector2(window.innerWidth, window.innerHeight),
         0.7,
         0.5,
@@ -262,6 +270,7 @@
       composer.addPass(renderScene);
       composer.addPass(bloomPass);
       composer.addPass(outputPass);
+      resizeMobileBloom();
       stage('postprocessing');
 
       // 7. Responsive Resize Handling
@@ -306,10 +315,12 @@
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
       geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
-      scene.add(new THREE.Points(geometry, new THREE.PointsMaterial({
+      const stars = new THREE.Points(geometry, new THREE.PointsMaterial({
         size: 0.36, vertexColors: true, transparent: true, opacity: 0.85,
         fog: false, depthWrite: false
-      })));
+      }));
+      stars.renderOrder = -4;
+      scene.add(stars);
     }
 
     /**
@@ -317,7 +328,8 @@
      */
     function setupLighting() {
       // 1. Blue sky fill
-      const ambientLight = new THREE.HemisphereLight(0x8baee8, 0x283449, 0.85);
+      const ambientLight = new THREE.HemisphereLight(0x8baee8, compactDevice ? 0x35445b : 0x283449,
+        compactDevice ? 0.95 : 0.85);
       scene.add(ambientLight);
 
       // 2. Moonlight and soft directional shadows
@@ -336,7 +348,7 @@
       sunsetLight.shadow.bias = -0.0004;
       sunsetLight.shadow.radius = 2.0;
       scene.add(sunsetLight);
-      const fillLight = new THREE.DirectionalLight(0x768bc4, 0.45);
+      const fillLight = new THREE.DirectionalLight(0x768bc4, compactDevice ? 0.55 : 0.45);
       fillLight.position.set(15, 10, 20);
       scene.add(fillLight);
       const rockRim = new THREE.DirectionalLight(0x759fe0, 0.65);
@@ -1417,6 +1429,24 @@
       camera.position.copy(controls.target).add(orbitOffset);
     }
 
+    function resizeMobileBloom() {
+      if (compactDevice && bloomPass) {
+        const ratio = renderer.getPixelRatio() * 0.75;
+        bloomPass.setSize(window.innerWidth * ratio, window.innerHeight * ratio);
+      }
+    }
+
+    function updateMobileRendering(time, dt) {
+      if (!compactDevice) return;
+      const distance = camera.position.distanceTo(controls.target);
+      if (scene.fog) scene.fog.density = THREE.MathUtils.damp(scene.fog.density,
+        0.009 * Math.min(1, 56 / distance), 4, dt);
+      if (renderer.shadowMap && time >= nextShadowFrame) {
+        renderer.shadowMap.needsUpdate = true;
+        nextShadowFrame = time + (distance < 35 ? 1 / 18 : 1 / 10);
+      }
+    }
+
     function onWindowResize() {
       const width = window.innerWidth;
       const height = window.innerHeight;
@@ -1432,6 +1462,7 @@
       if (composer) {
         composer.setPixelRatio(renderer.getPixelRatio());
         composer.setSize(width, height);
+        resizeMobileBloom();
       }
     }
 
@@ -1611,6 +1642,8 @@
         fireflies.geometry.attributes.color.needsUpdate = true;
       }
 
+      updateMobileRendering(time, dt);
+
       // Render through Bloom Post-processing
       if (composer) {
         composer.render();
@@ -1633,6 +1666,7 @@
           new URL('./forest-details.js', document.baseURI).href,
           new URL('./swarm-patterns.js', document.baseURI).href,
           new URL('./cosmic-sky.js', document.baseURI).href,
+          new URL('./accretion-disk.js', document.baseURI).href,
           new URL('./firefly-avoidance.js', document.baseURI).href];
         const responses = await Promise.all(sources.map(url => fetch(url, { cache: 'no-store' })));
         if (responses.every(response => response.ok)) {
@@ -1651,6 +1685,6 @@
     watchLocalSource();
   }
 </script>
-<script type="module" src="./ambient-audio.js"></script>
+<script type="module" src="./ambient-audio.js?v=mobile-20261025"></script>
 </body>
 </html>

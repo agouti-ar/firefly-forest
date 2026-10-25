@@ -15,6 +15,7 @@ A procedural Three.js night diorama: a sakura grove on a floating asteroid, surr
 - Optional Web Audio ambience uses CC0 field recordings of insects and frogs, a stream, and rare owl calls, with wind and splash effects synchronized with koi jumps. Recordings load only after enabling sound; synthesized ambience remains a fallback. The English Sound on/off control includes a volume slider, remembers volume, and supports touch screens. Audio starts off and pauses in background tabs. See AUDIO-CREDITS.md for sources.
 - Airy ground mist disperses below the island edges. A cratered moon with dark maria and a soft halo completes an artistic phase cycle in 90 seconds and drifts around the sky in eight minutes. Its light direction and shadows follow its movement.
 - A world-fixed, one-sided cosmic horizon mixes muted amber cliffs, smoky carmine, indigo and a faint diagonal dust band. The upper sky stays dark blue. Its texture is baked once at startup. A shooting star with a soft head and tapered luminous ribbon appears for 2.6 seconds every sixteen seconds, starting five seconds after loading. Each launch selects an upper corner of the current view, then follows a fixed world path; reduced-motion mode disables it.
+- A small tilted amber accretion-disk silhouette sits in a fixed distant sky sector, initially above and left of the island. Its opaque black centre masks the star field. It uses one precomputed texture and a single sprite rather than a ray-marching effect.
 - A 137-second firefly cycle opens with a luminous koi, then morphs through all twelve zodiac glyphs, eight seconds per sign, before dispersing. Descent finishes at second 126; the next ascent starts four seconds into the following cycle, leaving fifteen seconds of rest in the grove. Captions resolve from soft focus during the last 0.7 seconds of each 2.5-second morph, then stay pixel-aligned and still. Changes are hidden by fades. A few low fireflies on the nebula side have amber colouring. Tree canopy and trunk colliders keep particles outside the trees, including during formation transitions.
 - Procedural soil and bark grain, softly irregular textured sakura crowns and falling petals.
 - A more detailed owl with patterned feathers, blinking, small natural head turns and occasional wing stretches.
@@ -56,9 +57,14 @@ Three.js **0.160.0**, browser ES modules, no build step or external model assets
 | Hanging vines | 58 | 36 |
 | Floating rocks | 23 | 14 |
 | Shadow map | 2048² | 1024² |
+| Shadow refresh | Every frame | 10 Hz overview / 18 Hz close-up |
+| Bloom buffer scale | 100% | 75% (main scene resolution unchanged) |
+| Moon phase texture refresh | 4 Hz | 2 Hz |
 | Pixel ratio cap | 1.75 | 1.25 |
 
-Water normals update every second frame on desktop and every third frame on compact devices. After startup, a sustained average frame time above 34 ms triggers one resolution reduction. These are quality safeguards, not a measured FPS guarantee. Mobile appearance and performance still need device testing.
+Water normals update every second frame on desktop and every third frame on compact devices. A spatial grid limits firefly collision queries to neighbouring tree volumes and reuses its buckets. Long audio loops are prepared in small asynchronous chunks so enabling sound does not require one long synchronous copy.
+
+Portrait framing moves the camera farther away; compact mode compensates distance fog so this does not artificially darken the island. Its hemisphere and fill lighting are slightly lifted. After startup, a sustained average frame time above 34 ms triggers one resolution reduction. These are quality safeguards, not a measured FPS guarantee; final frame pacing needs checking on the target phone.
 
 ## Files
 
@@ -68,6 +74,7 @@ Water normals update every second frame on desktop and every third frame on comp
 - `forest-details.js`: procedural textures, curved flower geometry, nebula and the phased moon.
 - `swarm-patterns.js`: sampled vector silhouettes of twelve zodiac glyphs.
 - `cosmic-sky.js`: baked cosmic horizon, diagonal dust band and a reusable meteor trail.
+- `accretion-disk.js`: inexpensive baked disk silhouette and initial sky placement.
 - `firefly-avoidance.js`: tree collision volumes, steering and particle projection.
 - `README.md`: current scene and development instructions.
 - `preview_server.py`: local server with disabled browser caching.

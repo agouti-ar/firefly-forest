@@ -107,7 +107,7 @@ export function makeForestDetails(THREE) {
     return flower;
   }
 
-  function createMoon() {
+  function createMoon(updateRate = 4) {
     const size = 192, pixels = new Uint8Array(size * size * 4);
     const normals = new Float32Array(size * size * 3), albedo = new Float32Array(size * size);
     const craters = Array.from({ length: 85 }, (_, i) => ({
@@ -172,7 +172,7 @@ export function makeForestDetails(THREE) {
     return { mesh: group, illumination: 1, update(time) {
       const angle = -2.3 + time * Math.PI * 2 / 480;
       group.position.set(Math.cos(angle) * 210, -20 + Math.sin(time * 0.004) * 4, Math.sin(angle) * 210);
-      const step = Math.floor(time * 4);
+      const step = Math.floor(time * updateRate);
       if (step === lastStep) return;
       lastStep = step;
       const phase = 0.45 + time * Math.PI * 2 / 90;
