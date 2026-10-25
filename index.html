@@ -28,6 +28,22 @@
       display: block;
       outline: none;
     }
+    .night-audio-toggle {
+      position: fixed;
+      bottom: 18px;
+      left: 18px;
+      z-index: 2;
+      padding: 10px 14px;
+      border: 1px solid rgba(174, 214, 231, 0.25);
+      border-radius: 24px;
+      background: rgba(7, 19, 34, 0.82);
+      color: #c8dce6;
+      font: 13px system-ui, sans-serif;
+      cursor: pointer;
+    }
+    .night-audio-toggle:focus-visible { outline: 2px solid #9fe5df; outline-offset: 3px; }
+    .night-audio-toggle[aria-pressed="true"] { border-color: #85c9bf; }
+    .night-audio-toggle:disabled { opacity: 0.6; cursor: wait; }
   </style>
 
   <!-- Three.js & OrbitControls via CDN Import Map -->
@@ -61,11 +77,30 @@
     const clock = new THREE.Clock();
     const mistLayers = [], crowns = [];
     let waterSurface, waterRestPositions;
+    const islandOutline = (angle) => 17.6 + Math.sin(angle * 3 + 0.4) * 0.65
+      + Math.sin(angle * 7) * 0.38 + Math.cos(angle * 11) * 0.22;
     const pointer = new THREE.Vector2();
     const raycaster = new THREE.Raycaster();
     const hoverPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -3);
     const cursorWorld = new THREE.Vector3();
     let pointerActive = false;
+    const compactDevice = matchMedia('(pointer: coarse)').matches || innerWidth < 700;
+    const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const quality = { pixelRatio: Math.min(devicePixelRatio, compactDevice ? 1.25 : 1.75),
+      fireflies: compactDevice ? 180 : 300, stars: compactDevice ? 800 : 1400,
+      petals: compactDevice ? 55 : 100 };
+    const driftingRocks = [], petalData = [];
+    const koi = [], lilyPads = [], frogs = [], waterRipples = [];
+    const swarmCount = compactDevice ? 100 : 170;
+    const swarmColor = new THREE.Color(0xbdffe8);
+    const swarmCenter = new THREE.Vector3(0, 17.2, 0);
+    const swarmTarget = new THREE.Vector3();
+    let waterEnvironmentTarget;
+    let petals, owlHead, owlEyes, waterFrame = 0;
+    let cameraHeld = false, cameraResumeAt = 0, cameraBlend = 0;
+    let frameSum = 0, frameSamples = 0, qualityAdjusted = false;
+    const orbitOffset = new THREE.Vector3();
+    const orbitSpherical = new THREE.Spherical();
 
     /**
      * Entry Point: Initialize WebGL environment, lighting, geometry, and controls
@@ -73,7 +108,7 @@
     function init() {
       const canvas = document.getElementById('webgl-canvas');
 
-      // 1. Scene & Sunset Gradient Atmosphere (Patch 4)
+      // 1. Night sky and atmospheric depth
       scene = new THREE.Scene();
       setupNightSky();
       scene.fog = new THREE.FogExp2(0x101e36, 0.009);
@@ -81,7 +116,8 @@
       // 2. Camera Setup (Patch 4: Isometric angle overlooking the diorama)
       const aspect = window.innerWidth / window.innerHeight;
       camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 180);
-      camera.position.set(36, 26, 36);
+      const framing = aspect < 1 ? Math.min(1.65, 1 / Math.sqrt(aspect)) : 1;
+      camera.position.set(36 * framing, 24 * framing, 36 * framing);
 
       // 3. Renderer with ACES Filmic Tone Mapping & Soft Shadows
       renderer = new THREE.WebGLRenderer({
@@ -90,7 +126,7 @@
         powerPreference: 'high-performance'
       });
       renderer.setSize(window.innerWidth, window.innerHeight);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setPixelRatio(quality.pixelRatio);
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 1.05; // Balanced exposure to prevent white clipping
       renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -100,13 +136,21 @@
       // 4. OrbitControls Setup (Patch 4: Centered isometric rotation)
       controls = new OrbitControls(camera, renderer.domElement);
       controls.target.set(0, 1, 0);
-      controls.autoRotate = true;
+      controls.autoRotate = false; // The cinematic orbit below also varies elevation.
       controls.autoRotateSpeed = 0.5; // Slow, majestic diorama rotation
       controls.maxPolarAngle = Math.PI / 2.2; // Keep camera above horizon
       controls.minDistance = 10;
-      controls.maxDistance = 75;
+      controls.maxDistance = 100;
       controls.enableDamping = true;
       controls.dampingFactor = 0.05;
+      controls.addEventListener('start', () => {
+        cameraHeld = true;
+        cameraBlend = 0;
+      });
+      controls.addEventListener('end', () => {
+        cameraHeld = false;
+        cameraResumeAt = performance.now() + 12000;
+      });
 
       // 5. Build Diorama Entities
       setupLighting();
@@ -114,6 +158,9 @@
       createIslandDetails();
       setupMushroomsAndFireflies();
       createGroundMist();
+      createIslandLife();
+      createPondLife();
+      captureWaterReflections();
 
       // 6. Post-processing Pipeline: UnrealBloomPass & OutputPass (Calibrated for crisp diorama)
       const renderScene = new RenderPass(scene, camera);
@@ -147,8 +194,7 @@
     }
 
     /**
-     * Procedural Sky Gradient:
-     * Twilight violet top transitioning through rose-magenta to warm golden sunset.
+     * Deep blue procedural sky with a separate distant star field.
      */
     function setupNightSky() {
       const canvas = document.createElement('canvas');
@@ -166,7 +212,7 @@
       bgTexture.colorSpace = THREE.SRGBColorSpace;
       scene.background = bgTexture;
       const positions = [], colors = [];
-      for (let i = 0; i < 1400; i++) {
+      for (let i = 0; i < quality.stars; i++) {
         const azimuth = Math.random() * Math.PI * 2;
         const elevation = Math.random();
         const ring = Math.sqrt(1 - elevation * elevation);
@@ -185,22 +231,19 @@
     }
 
     /**
-     * Lighting Setup (Patch 4: Warm sunset palette):
-     * - Warm ambient illumination
-     * - Angled sunset DirectionalLight casting soft shadows
-     * - Bioluminescent turquoise point light beneath the island from the water ring
+     * Cool moonlight, readable blue fill and restrained bioluminescence.
      */
     function setupLighting() {
-      // 1. Warm Ambient Light
+      // 1. Blue sky fill
       const ambientLight = new THREE.HemisphereLight(0x8baee8, 0x283449, 0.85);
       scene.add(ambientLight);
 
-      // 2. Sunset Directional Light
+      // 2. Moonlight and soft directional shadows
       const sunsetLight = new THREE.DirectionalLight(0xb8d7ff, 2.2);
       sunsetLight.position.set(-18, 24, -16);
       sunsetLight.castShadow = true;
-      sunsetLight.shadow.mapSize.width = 2048;
-      sunsetLight.shadow.mapSize.height = 2048;
+      sunsetLight.shadow.mapSize.width = compactDevice ? 1024 : 2048;
+      sunsetLight.shadow.mapSize.height = compactDevice ? 1024 : 2048;
       sunsetLight.shadow.camera.near = 0.5;
       sunsetLight.shadow.camera.far = 80;
       sunsetLight.shadow.camera.left = -25;
@@ -213,6 +256,9 @@
       const fillLight = new THREE.DirectionalLight(0x768bc4, 0.45);
       fillLight.position.set(15, 10, 20);
       scene.add(fillLight);
+      const rockRim = new THREE.DirectionalLight(0x759fe0, 0.65);
+      rockRim.position.set(12, -9, -16);
+      scene.add(rockRim);
 
       // 3. Subtle turquoise water glow reflecting from underneath
       const waterLight = new THREE.PointLight(0x00d8f0, 1.2, 16);
@@ -234,8 +280,7 @@
 
       // Shared irregular outline keeps the soil and exposed rock joined.
       const segments = 40;
-      const outline = (angle) => 17.6 + Math.sin(angle * 3 + 0.4) * 0.65
-        + Math.sin(angle * 7) * 0.38 + Math.cos(angle * 11) * 0.22;
+      const outline = islandOutline;
       const vertices = [], indices = [];
       const rings = [[1, -0.4], [0.97, -2.1], [0.73, -5.3], [0.39, -8.2], [0.08, -10.2]];
       rings.forEach(([scale, height], ring) => {
@@ -282,7 +327,7 @@
       }
 
       // 2. Lush Grass Plateau (Top of the island)
-      const grassGeo = new THREE.CylinderGeometry(1, 1, 0.9, segments, 1);
+      const grassGeo = new THREE.CylinderGeometry(1, 1, 0.9, segments, 1, true);
       const soilPositions = grassGeo.attributes.position;
       const soilColors = [];
       const moss = new THREE.Color(0x386b54), earth = new THREE.Color(0x454038);
@@ -306,6 +351,27 @@
       grassTop.position.y = 0;
       grassTop.receiveShadow = true;
       islandGroup.add(grassTop);
+      // A real shallow channel beneath the water, with raised irregular shores.
+      const terrainGeo = new THREE.RingGeometry(0, 1, segments, 28);
+      terrainGeo.rotateX(-Math.PI / 2);
+      const terrainPositions = terrainGeo.attributes.position;
+      const terrainColors = [];
+      for (let i = 0; i < terrainPositions.count; i++) {
+        const x = terrainPositions.getX(i), z = terrainPositions.getZ(i);
+        const angle = Math.atan2(z, x), shore = outline(angle);
+        const radius = Math.hypot(x, z) * shore;
+        const channel = THREE.MathUtils.smoothstep(radius, 13.65, 14.35)
+          * (1 - THREE.MathUtils.smoothstep(radius, shore - 0.9, shore - 0.2));
+        terrainPositions.setXYZ(i, x * shore, 0.45 - channel * 0.8, z * shore);
+        const tint = moss.clone().lerp(earth, channel * 0.8);
+        tint.multiplyScalar(0.9 + Math.sin(x * 23 + z * 17) * 0.1);
+        terrainColors.push(tint.r, tint.g, tint.b);
+      }
+      terrainGeo.setAttribute('color', new THREE.Float32BufferAttribute(terrainColors, 3));
+      terrainGeo.computeVertexNormals();
+      const terrain = new THREE.Mesh(terrainGeo, grassMat);
+      terrain.receiveShadow = true;
+      islandGroup.add(terrain);
       // Uneven moss cushions along the shore, clear of the water channel.
       const mossMat = new THREE.MeshStandardMaterial({ color: 0x315d48, roughness: 1, flatShading: true });
       for (let i = 0; i < 24; i++) {
@@ -319,7 +385,7 @@
       }
 
       // 3. Luminous Turquoise Water Ring (Balanced soft glow)
-      const waterGeo = new THREE.RingGeometry(14, 16.7, 96, 8);
+      const waterGeo = new THREE.RingGeometry(14, 16.7, compactDevice ? 112 : 160, compactDevice ? 12 : 16);
       waterGeo.rotateX(-Math.PI / 2);
       const waterPositions = waterGeo.attributes.position;
       for (let i = 0; i < waterPositions.count; i++) {
@@ -332,17 +398,22 @@
       waterGeo.computeVertexNormals();
       const waterMat = new THREE.MeshPhysicalMaterial({
         color: 0x39858e,
-        roughness: 0.19,
+        roughness: 0.16,
+        normalMap: createWaterNormals(),
+        normalScale: new THREE.Vector2(0.22, 0.22),
+        clearcoatNormalMap: createWaterNormals(),
+        clearcoatNormalScale: new THREE.Vector2(0.12, 0.12),
         metalness: 0,
         clearcoat: 1,
         clearcoatRoughness: 0.12,
         ior: 1.333,
         transparent: true,
-        opacity: 0.48,
+        opacity: 0.57,
         depthWrite: false,
         side: THREE.DoubleSide
       });
       const waterRing = new THREE.Mesh(waterGeo, waterMat);
+      waterMat.clearcoatNormalMap.repeat.set(9, 9);
       waterRing.position.y = 0.64;
       waterRing.receiveShadow = true;
       waterSurface = waterRing;
@@ -377,14 +448,16 @@
 
       // Slender curved trunk
       const trunkHeight = 6 * scale;
-      const trunkGeo = new THREE.CylinderGeometry(0.3 * scale, 0.8 * scale, trunkHeight, 6);
+      const visibleTrunkHeight = trunkHeight * 0.82;
+      const trunkGeo = new THREE.CylinderGeometry(0.25 * scale, 0.8 * scale, visibleTrunkHeight, 6);
       const trunkMat = new THREE.MeshStandardMaterial({
         color: 0x4a2c2a,
         roughness: 0.8,
         flatShading: true
       });
       const trunk = new THREE.Mesh(trunkGeo, trunkMat);
-      trunk.position.y = trunkHeight / 2;
+      trunk.name = 'sakura-trunk';
+      trunk.position.y = visibleTrunkHeight / 2;
       trunk.rotation.z = (Math.random() - 0.5) * 0.22;
       trunk.rotation.x = (Math.random() - 0.5) * 0.15;
       trunk.castShadow = true;
@@ -420,6 +493,12 @@
           phase: Math.random() * Math.PI * 2, amplitude: 0.06 * scale });
       }
 
+      // An interior foliage core covers the trunk tip even between swaying clusters.
+      const canopyCore = new THREE.Mesh(new THREE.IcosahedronGeometry(1.1 * scale, 1), leafMat);
+      canopyCore.name = 'sakura-canopy-core';
+      canopyCore.position.y = trunkHeight * 0.87;
+      canopyCore.castShadow = canopyCore.receiveShadow = true;
+      treeGroup.add(canopyCore);
       return treeGroup;
     }
 
@@ -504,6 +583,501 @@
       return new THREE.CanvasTexture(canvas);
     }
 
+    function createWaterNormals() {
+      const size = 128, pixels = new Uint8Array(size * size * 4);
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const u = x / size * Math.PI * 2, v = y / size * Math.PI * 2;
+          const dx = Math.cos(u * 5 + v * 3) * 0.32 + Math.cos(u * 11 - v * 7) * 0.13;
+          const dy = Math.cos(u * 5 + v * 3) * 0.19 - Math.cos(u * 11 - v * 7) * 0.08;
+          const length = Math.hypot(dx, dy, 1), index = (y * size + x) * 4;
+          pixels[index] = Math.round((dx / length * 0.5 + 0.5) * 255);
+          pixels[index + 1] = Math.round((dy / length * 0.5 + 0.5) * 255);
+          pixels[index + 2] = Math.round((1 / length * 0.5 + 0.5) * 255);
+          pixels[index + 3] = 255;
+        }
+      }
+      const texture = new THREE.DataTexture(pixels, size, size, THREE.RGBAFormat);
+      texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+      texture.magFilter = texture.minFilter = THREE.LinearFilter;
+      texture.repeat.set(5, 5);
+      texture.needsUpdate = true;
+      return texture;
+    }
+
+    function createIslandLife() {
+      const bark = new THREE.MeshStandardMaterial({ color: 0x493c40, roughness: 0.95, flatShading: true });
+      const vineMaterial = new THREE.MeshStandardMaterial({ color: 0x3e6654, roughness: 1 });
+      const leafMaterial = new THREE.MeshStandardMaterial({ color: 0x46785d, roughness: 0.95, flatShading: true });
+      const leafGeometry = new THREE.IcosahedronGeometry(0.16, 0);
+      const addCurve = (points, radius, material, segments = 16, taper = false) => {
+        const curve = new THREE.CatmullRomCurve3(points.map(p => new THREE.Vector3(...p)));
+        const geometry = new THREE.TubeGeometry(curve, segments, radius, 5, false);
+        if (taper) {
+          const position = geometry.attributes.position;
+          for (let i = 0; i <= segments; i++) {
+            const center = curve.getPointAt(i / segments);
+            const width = Math.pow(1 - i / segments, 0.8) * 0.94 + 0.06;
+            for (let j = 0; j <= 5; j++) {
+              const index = i * 6 + j;
+              const ridge = width * (0.92 + Math.sin(i * 1.7 + j * 2) * 0.08);
+              position.setXYZ(index, center.x + (position.getX(index) - center.x) * ridge,
+                center.y + (position.getY(index) - center.y) * ridge,
+                center.z + (position.getZ(index) - center.z) * ridge);
+            }
+          }
+          geometry.computeVertexNormals();
+        }
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.castShadow = mesh.receiveShadow = true;
+        islandGroup.add(mesh);
+        return curve;
+      };
+      for (let i = 0; i < 8; i++) {
+        const angle = i * 2.39996;
+        const c = Math.cos(angle), s = Math.sin(angle);
+        const shore = islandOutline(angle);
+        addCurve([[c * (shore - 0.55), 0.5, s * (shore - 0.55)],
+          [c * (shore + 0.03), 0.1, s * (shore + 0.03)],
+          [c * (shore - 0.3), -1.1, s * (shore - 0.3)],
+          [c * (shore - 1.6), -2.5 - (i % 3) * 0.45, s * (shore - 1.6)]],
+          0.2 + (i % 3) * 0.04, bark, 24, true);
+        const branchAngle = angle + 0.035;
+        addCurve([[c * (shore - 0.1), -0.65, s * (shore - 0.1)],
+          [Math.cos(branchAngle) * (shore - 0.2), -1.4, Math.sin(branchAngle) * (shore - 0.2)],
+          [Math.cos(branchAngle + 0.03) * (shore - 1.5), -2.1, Math.sin(branchAngle + 0.03) * (shore - 1.5)]],
+          0.075, bark, 12, true);
+      }
+      const vineCount = compactDevice ? 36 : 58;
+      const hangingLeafMaterial = leafMaterial.clone();
+      hangingLeafMaterial.color.set(0xffffff);
+      const vineLeaves = new THREE.InstancedMesh(leafGeometry, hangingLeafMaterial, vineCount * 28);
+      const vineLeaf = new THREE.Object3D();
+      const vineColors = [new THREE.Color(0x477c5b), new THREE.Color(0x315a47), new THREE.Color(0x5a8864)];
+      let vineLeafIndex = 0;
+      for (let i = 0; i < vineCount; i++) {
+        const angle = i / vineCount * Math.PI * 2 + Math.sin(i * 1.7) * 0.08;
+        const c = Math.cos(angle), s = Math.sin(angle);
+        const shore = islandOutline(angle);
+        const curve = addCurve([[c * (shore - 0.2), 0.4, s * (shore - 0.2)],
+          [c * (shore + 0.1), -1.3, s * (shore + 0.1)],
+          [c * (shore - 0.1), -3.6, s * (shore - 0.1)],
+          [c * (shore - 0.5) + Math.sin(i) * 0.8, -3.8 - (i % 7) * 0.85, s * (shore - 0.5)]],
+          0.026 + (i % 3) * 0.009, vineMaterial);
+        const nodes = 8 + (i % 7);
+        for (let j = 0; j < nodes; j++) {
+          const point = curve.getPoint((j + 0.5) / nodes);
+          for (const side of [-1, 1]) {
+            vineLeaf.position.copy(point);
+            vineLeaf.position.x += Math.cos(angle + Math.PI / 2) * side * 0.15 + c * 0.08;
+            vineLeaf.position.z += Math.sin(angle + Math.PI / 2) * side * 0.15 + s * 0.08;
+            vineLeaf.scale.set(1.6 + (i % 3) * 0.35, 0.45, 0.9);
+            vineLeaf.rotation.set(0.35, -angle + side * 0.65, side * 0.35);
+            vineLeaf.updateMatrix();
+            vineLeaves.setMatrixAt(vineLeafIndex, vineLeaf.matrix);
+            vineLeaves.setColorAt(vineLeafIndex++, vineColors[(i + j) % vineColors.length]);
+          }
+        }
+      }
+      vineLeaves.count = vineLeafIndex;
+      vineLeaves.instanceMatrix.needsUpdate = true;
+      vineLeaves.instanceColor.needsUpdate = true;
+      vineLeaves.receiveShadow = true;
+      islandGroup.add(vineLeaves);
+      // Fern clusters use one instanced draw call to keep the undergrowth light.
+      const fernCount = compactDevice ? 10 : 16;
+      const fern = new THREE.InstancedMesh(leafGeometry, leafMaterial, fernCount * 5 * 6);
+      const leaflet = new THREE.Object3D();
+      let leafletIndex = 0;
+      for (let i = 0; i < fernCount; i++) {
+        const angle = i * 2.39996, radius = 9.5 + (i % 4) * 0.85;
+        const x = Math.cos(angle) * radius, z = Math.sin(angle) * radius;
+        for (let f = 0; f < 5; f++) {
+          const direction = angle + f / 5 * Math.PI * 2;
+          for (let j = 0; j < 6; j++) {
+            const t = (j + 1) / 7, spread = t * 0.8;
+            leaflet.position.set(x + Math.cos(direction) * spread, 0.5 + Math.sin(t * Math.PI * 0.85) * 0.65,
+              z + Math.sin(direction) * spread);
+            leaflet.rotation.set(0, -direction, (j % 2 ? 1 : -1) * 0.2);
+            leaflet.scale.set(2.1 * (1 - t * 0.7), 0.3, 0.8);
+            leaflet.updateMatrix();
+            fern.setMatrixAt(leafletIndex++, leaflet.matrix);
+          }
+        }
+      }
+      fern.instanceMatrix.needsUpdate = true;
+      fern.receiveShadow = true;
+      islandGroup.add(fern);
+      const floatingMaterial = new THREE.MeshStandardMaterial({ color: 0x454b61, roughness: 0.9, flatShading: true });
+      const rockCount = compactDevice ? 14 : 23;
+      for (let i = 0; i < rockCount; i++) {
+        const angle = i * 2.39996 + 0.3;
+        const size = i < 3 ? 2.1 + i * 0.55 : 0.35 + (i % 5) * 0.28;
+        const orbitRadius = (i < 3 ? 23 : 20.5) + (i % 4) * 1.3;
+        const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(size, 0), floatingMaterial);
+        rock.position.set(Math.cos(angle) * orbitRadius, -2.5 - (i % 8) * 1.15, Math.sin(angle) * orbitRadius);
+        rock.scale.set(0.8 + (i % 3) * 0.2, 1.1 + (i % 4) * 0.2, 0.7 + (i % 2) * 0.25);
+        rock.rotation.set(i * 0.7, angle, i * 0.3);
+        rock.castShadow = rock.receiveShadow = true;
+        driftingRocks.push({ mesh: rock, y: rock.position.y, phase: angle,
+          radius: orbitRadius, speed: (i % 2 ? 1 : -1) * (0.005 + (i % 5) * 0.002),
+          lift: i < 3 ? 0.55 : 0.8 + (i % 3) * 0.25 });
+        islandGroup.add(rock);
+      }
+
+      // A small owl on a weathered perch in the foreground clearing.
+      addCurve([[6.8, 0.45, 8], [6.7, 1.6, 8], [7, 2.8, 8], [7.2, 4, 8]], 0.23, bark);
+      addCurve([[6.9, 2.5, 8], [7.8, 3.5, 8], [9.2, 3.7, 8]], 0.12, bark);
+      const owl = new THREE.Group();
+      owl.position.set(8.3, 3.65, 8);
+      owl.rotation.y = 0.45;
+      const feathers = new THREE.MeshStandardMaterial({ color: 0x73695f, roughness: 0.95, flatShading: true });
+      const pale = new THREE.MeshStandardMaterial({ color: 0xa89e89, roughness: 1 });
+      const dark = new THREE.MeshStandardMaterial({ color: 0x313047, roughness: 0.85 });
+      const gold = new THREE.MeshStandardMaterial({ color: 0xe5b96b, emissive: 0x80511d, emissiveIntensity: 0.15, roughness: 0.35 });
+      const shape = (parent, geometry, material, position, scale) => {
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.set(...position);
+        if (scale) mesh.scale.set(...scale);
+        mesh.castShadow = mesh.receiveShadow = true;
+        parent.add(mesh);
+        return mesh;
+      };
+      const sphere = new THREE.SphereGeometry(1, 12, 8);
+      shape(owl, sphere, feathers, [0, 0.72, 0], [0.48, 0.68, 0.38]);
+      shape(owl, sphere, pale, [0, 0.7, 0.25], [0.33, 0.48, 0.17]);
+      for (const side of [-1, 1]) {
+        const wing = shape(owl, sphere, dark, [side * 0.37, 0.7, 0], [0.19, 0.48, 0.32]);
+        wing.rotation.z = side * 0.15;
+        shape(owl, sphere, gold, [side * 0.2, 0.1, 0.12], [0.13, 0.07, 0.18]);
+      }
+      owlHead = new THREE.Group();
+      owlHead.position.y = 1.3;
+      owl.add(owlHead);
+      shape(owlHead, sphere, feathers, [0, 0, 0], [0.45, 0.4, 0.36]);
+      owlEyes = [];
+      for (const side of [-1, 1]) {
+        shape(owlHead, sphere, pale, [side * 0.18, 0, 0.28], [0.2, 0.23, 0.09]);
+        const eye = new THREE.Group();
+        eye.position.set(side * 0.18, 0.02, 0.36);
+        owlHead.add(eye);
+        shape(eye, sphere, gold, [0, 0, 0], [0.075, 0.085, 0.035]);
+        shape(eye, sphere, dark, [0, 0, 0.028], [0.043, 0.065, 0.018]);
+        owlEyes.push(eye);
+        const ear = shape(owlHead, new THREE.ConeGeometry(0.1, 0.24, 5), feathers,
+          [side * 0.3, 0.33, -0.03]);
+        ear.rotation.z = -side * 0.22;
+      }
+      const beak = shape(owlHead, new THREE.ConeGeometry(0.085, 0.23, 4), gold, [0, -0.12, 0.43]);
+      beak.rotation.x = Math.PI;
+      islandGroup.add(owl);
+
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 32;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#efb9d5';
+      ctx.beginPath();
+      ctx.ellipse(16, 16, 7, 12, 0.5, 0, Math.PI * 2);
+      ctx.fill();
+      const petalTexture = new THREE.CanvasTexture(canvas);
+      petalTexture.colorSpace = THREE.SRGBColorSpace;
+      const positions = new Float32Array(quality.petals * 3);
+      for (let i = 0; i < quality.petals; i++) {
+        const angle = Math.random() * Math.PI * 2, radius = Math.sqrt(Math.random()) * 12;
+        const x = Math.cos(angle) * radius, z = Math.sin(angle) * radius;
+        positions.set([x, 1 + Math.random() * 12, z], i * 3);
+        petalData.push({ x, z, phase: Math.random() * Math.PI * 2, speed: 0.25 + Math.random() * 0.25 });
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geometry.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 6, 0), 25);
+      petals = new THREE.Points(geometry, new THREE.PointsMaterial({
+        map: petalTexture, color: 0x9f88b6, size: 0.22, transparent: true,
+        opacity: 0.65, depthWrite: false, alphaTest: 0.02
+      }));
+      scene.add(petals);
+    }
+
+    function pondPoint(angle, lane) {
+      const outer = islandOutline(angle) - 0.7;
+      const radius = THREE.MathUtils.lerp(14, outer, lane);
+      return new THREE.Vector3(Math.cos(angle) * radius, 0, Math.sin(angle) * radius);
+    }
+
+    function waterHeight(x, z, time) {
+      const wind = x * 0.82 + z * 0.46;
+      let height = 0.64 + Math.sin(wind * 1.45 - time * 1.2) * 0.034
+        + Math.sin(x * -0.65 + z * 1.8 - time * 0.8) * 0.023
+        + Math.cos(wind * 3.3 + time * 1.65) * 0.009;
+      for (const ripple of waterRipples) {
+        const age = time - ripple.start;
+        if (age < 0 || age > 3.8) continue;
+        const distance = Math.hypot(x - ripple.x, z - ripple.z);
+        const front = (distance - age * 0.65) / 0.34;
+        height += Math.cos(distance * 12 - age * 8) * Math.exp(-front * front)
+          * 0.024 * (1 - age / 3.8);
+      }
+      return height;
+    }
+
+    function emitWaterRipple(x, z, time) {
+      let target = waterRipples[0];
+      for (const ripple of waterRipples) {
+        if (ripple.start < target.start) target = ripple;
+      }
+      target.x = x;
+      target.z = z;
+      target.start = time;
+      const radius = Math.hypot(x, z);
+      target.radius = Math.max(0.2, Math.min(radius - 14,
+        islandOutline(Math.atan2(z, x)) - 0.7 - radius) * 0.85);
+    }
+
+    function createPondLife() {
+      const pearl = new THREE.MeshStandardMaterial({ color: 0xe4dfc9, roughness: 0.38 });
+      const vermilion = new THREE.MeshStandardMaterial({ color: 0xd76329, roughness: 0.4 });
+      const charcoal = new THREE.MeshStandardMaterial({ color: 0x2d3441, roughness: 0.45 });
+      const fins = new THREE.MeshStandardMaterial({ color: 0xd4b27c, roughness: 0.4,
+        transparent: true, opacity: 0.75, side: THREE.DoubleSide });
+      const sphere = new THREE.SphereGeometry(1, 12, 8);
+      const addEllipsoid = (parent, material, position, scale) => {
+        const mesh = new THREE.Mesh(sphere, material);
+        mesh.position.set(...position);
+        mesh.scale.set(...scale);
+        parent.add(mesh);
+        return mesh;
+      };
+      const triangle = (points, material) => {
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute('position', new THREE.Float32BufferAttribute(points, 3));
+        geometry.computeVertexNormals();
+        return new THREE.Mesh(geometry, material);
+      };
+      for (let i = 0; i < 2; i++) {
+        const fish = new THREE.Group();
+        const body = addEllipsoid(fish, pearl, [0, 0, 0], [0.22, 0.17, 0.63]);
+        body.castShadow = false;
+        // Soft vertical contact shadow on the submerged bed. The raised shore
+        // depth-tests it away, so fish no longer cast moonlight shadows on land.
+        const shadowGeometry = new THREE.PlaneGeometry(1, 1);
+        shadowGeometry.rotateX(-Math.PI / 2);
+        const shadow = new THREE.Mesh(shadowGeometry, new THREE.MeshBasicMaterial({
+          map: createGlowTexture(), color: 0x07141c, transparent: true,
+          opacity: 0.3, depthWrite: false, side: THREE.DoubleSide
+        }));
+        shadow.renderOrder = -1;
+        scene.add(shadow);
+        const markings = i === 0 ? vermilion : charcoal;
+        addEllipsoid(fish, markings, [0.04, 0.12, 0.29], [0.16, 0.07, 0.2]);
+        addEllipsoid(fish, markings, [-0.05, 0.12, -0.15], [0.14, 0.07, 0.17]);
+        for (const side of [-1, 1]) {
+          addEllipsoid(fish, charcoal, [side * 0.16, 0.06, 0.43], [0.035, 0.035, 0.035]);
+          fish.add(triangle([side * 0.15, -0.04, 0.18, side * 0.5, -0.02, -0.12,
+            side * 0.16, -0.04, -0.12], fins));
+        }
+        fish.add(triangle([0, 0.12, 0.17, 0, 0.33, -0.1, 0, 0.12, -0.35], fins));
+        const tail = new THREE.Group();
+        tail.position.z = -0.58;
+        tail.add(triangle([0, 0, 0.05, -0.25, 0.05, -0.4, 0.25, -0.05, -0.4], fins));
+        fish.add(tail);
+        scene.add(fish);
+        koi.push({ mesh: fish, tail, shadow, phase: i * 2.7 + 0.4, lane: 0.46 + i * 0.22,
+          direction: i ? -1 : 1, jumping: false, lastWake: -i * 2 });
+      }
+
+      const padMaterial = new THREE.MeshStandardMaterial({ color: 0x4e7945,
+        roughness: 0.55, side: THREE.DoubleSide });
+      const petalMaterial = new THREE.MeshStandardMaterial({ color: 0xe6c2d9, roughness: 0.65 });
+      const pollen = new THREE.MeshStandardMaterial({ color: 0xd0ad58, roughness: 0.65 });
+      for (let i = 0; i < 10; i++) {
+        const pad = new THREE.Group();
+        const angle = 0.25 + i * Math.PI * 2 / 10;
+        const point = pondPoint(angle, i % 2 ? 0.19 : 0.81);
+        const radius = 0.4 + (i % 3) * 0.1;
+        const shape = new THREE.Shape();
+        shape.moveTo(0, 0);
+        shape.lineTo(Math.cos(0.17) * radius, Math.sin(0.17) * radius);
+        shape.absarc(0, 0, radius, 0.17, Math.PI * 2 - 0.17, false);
+        shape.lineTo(0, 0);
+        const lotus = i % 3 === 0;
+        const leaf = new THREE.Mesh(lotus ? new THREE.CircleGeometry(radius, 32)
+          : new THREE.ShapeGeometry(shape, 24), padMaterial);
+        leaf.rotation.x = -Math.PI / 2;
+        leaf.position.y = lotus ? 0.06 : 0;
+        leaf.rotation.z = i * 0.7;
+        leaf.receiveShadow = true;
+        pad.add(leaf);
+        if (i % 3 === 0) {
+          const flower = new THREE.Group();
+          flower.position.y = 0.48 + (i % 2) * 0.13;
+          pad.add(flower);
+          const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.025,
+            flower.position.y, 5), padMaterial);
+          stem.position.y = flower.position.y / 2;
+          pad.add(stem);
+          for (let p = 0; p < 12; p++) {
+            const angle = p / 6 * Math.PI;
+            const layer = p < 6 ? 0 : 1;
+            const petal = addEllipsoid(flower, petalMaterial,
+              [Math.cos(angle) * (0.14 - layer * 0.05), 0.09 + layer * 0.08,
+                Math.sin(angle) * (0.14 - layer * 0.05)],
+              [0.075, 0.07 + layer * 0.04, 0.19 - layer * 0.04]);
+            petal.rotation.y = Math.PI / 2 - angle;
+            petal.rotation.x = 0.2;
+          }
+          addEllipsoid(flower, pollen, [0, 0.17, 0], [0.085, 0.055, 0.085]);
+        }
+        pad.position.copy(point);
+        scene.add(pad);
+        lilyPads.push({ mesh: pad, x: point.x, z: point.z, phase: i * 1.8 });
+      }
+
+      const frogSkin = new THREE.MeshStandardMaterial({ color: 0x6b8249, roughness: 0.72 });
+      const eyeMaterial = new THREE.MeshStandardMaterial({ color: 0xbfa665, roughness: 0.4 });
+      for (let i = 0; i < 2; i++) {
+        const frog = new THREE.Group();
+        const body = addEllipsoid(frog, frogSkin, [0, 0.12, 0], [0.19, 0.12, 0.25]);
+        addEllipsoid(frog, frogSkin, [0, 0.18, 0.2], [0.18, 0.12, 0.15]);
+        for (const side of [-1, 1]) {
+          addEllipsoid(frog, frogSkin, [side * 0.18, 0.08, -0.12], [0.13, 0.085, 0.17]);
+          addEllipsoid(frog, frogSkin, [side * 0.16, 0.035, 0.23], [0.06, 0.025, 0.1]);
+          addEllipsoid(frog, eyeMaterial, [side * 0.1, 0.28, 0.25], [0.055, 0.055, 0.05]);
+          addEllipsoid(frog, charcoal, [side * 0.1, 0.28, 0.292], [0.027, 0.027, 0.018]);
+        }
+        frog.rotation.y = i * 2.3;
+        frog.position.y = 0.025;
+        lilyPads[i === 0 ? 1 : 5].mesh.add(frog);
+        frogs.push({ body, phase: i * 2.1 });
+      }
+      const ringGeometry = new THREE.RingGeometry(0.96, 1, 48);
+      for (let i = 0; i < 8; i++) {
+        const mesh = new THREE.Mesh(ringGeometry, new THREE.MeshBasicMaterial({
+          color: 0xa0d4dc, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide
+        }));
+        mesh.rotation.x = -Math.PI / 2;
+        mesh.visible = false;
+        scene.add(mesh);
+        waterRipples.push({ mesh, x: 0, z: 0, start: -Infinity, radius: 0.75 });
+      }
+      animatePondLife(0, 0);
+    }
+
+    function captureWaterReflections() {
+      if (compactDevice) return;
+      // One environment capture supplies subtle canopy/sky reflections without
+      // six extra scene renders every frame. Light highlights remain dynamic.
+      waterEnvironmentTarget = new THREE.WebGLCubeRenderTarget(128, { type: THREE.HalfFloatType });
+      const capture = new THREE.CubeCamera(0.1, 180, waterEnvironmentTarget);
+      capture.position.set(0, 2, 15);
+      const hidden = [waterSurface, fireflies, petals, ...mistLayers.map(layer => layer.mesh)];
+      const visibility = hidden.map(object => object.visible);
+      hidden.forEach(object => { object.visible = false; });
+      try {
+        capture.update(renderer, scene);
+        waterSurface.material.envMap = waterEnvironmentTarget.texture;
+        waterSurface.material.envMapIntensity = 0.45;
+        waterSurface.material.needsUpdate = true;
+      } finally {
+        hidden.forEach((object, i) => { object.visible = visibility[i]; });
+      }
+    }
+
+    function animatePondLife(time, dt) {
+      const motion = reducedMotion ? 0.25 : 1;
+      for (let i = 0; i < koi.length; i++) {
+        const fish = koi[i];
+        const angle = fish.phase + time * 0.055 * fish.direction * motion;
+        const point = pondPoint(angle, fish.lane);
+        const ahead = pondPoint(angle + 0.01 * fish.direction, fish.lane);
+        const cycle = (time + i * 13) % 38;
+        const jumping = !reducedMotion && cycle > 24 && cycle < 25.6;
+        const jumpPhase = jumping ? (cycle - 24) / 1.6 : 0;
+        const lift = jumping ? Math.sin(jumpPhase * Math.PI) * 1.05 : 0;
+        fish.mesh.position.set(point.x, waterHeight(point.x, point.z, time) - 0.34 + lift, point.z);
+        fish.mesh.rotation.y = Math.atan2(ahead.x - point.x, ahead.z - point.z);
+        fish.shadow.position.set(point.x, -0.25, point.z);
+        fish.shadow.rotation.y = fish.mesh.rotation.y;
+        fish.shadow.scale.set(0.58 + lift * 0.08, 1, 1.4 + lift * 0.1);
+        fish.shadow.material.opacity = 0.3 / (1 + lift * 1.5);
+        fish.mesh.rotation.x = jumping ? -Math.cos(jumpPhase * Math.PI) * 0.55 : Math.sin(time * 2 + i) * 0.025;
+        fish.tail.rotation.y = Math.sin(time * 6 * motion + i) * 0.35;
+        if ((fish.jumping && !jumping) || (time - fish.lastWake > 4.5 && !jumping)) {
+          emitWaterRipple(point.x, point.z, time);
+          fish.lastWake = time;
+        }
+        fish.jumping = jumping;
+      }
+      for (const pad of lilyPads) {
+        pad.mesh.position.y = waterHeight(pad.x, pad.z, time) + 0.025;
+        pad.mesh.rotation.x = Math.sin(time * 0.65 + pad.phase) * 0.035 * motion;
+        pad.mesh.rotation.z = Math.cos(time * 0.5 + pad.phase) * 0.025 * motion;
+      }
+      for (const frog of frogs) frog.body.scale.y = 0.12 * (1 + Math.sin(time * 2 + frog.phase) * 0.035);
+      for (const ripple of waterRipples) {
+        const age = time - ripple.start;
+        ripple.mesh.visible = age >= 0 && age < 3.8;
+        if (!ripple.mesh.visible) continue;
+        ripple.mesh.position.set(ripple.x, waterHeight(ripple.x, ripple.z, time) + 0.018, ripple.z);
+        ripple.mesh.scale.setScalar(Math.min(ripple.radius, 0.08 + age * 0.45));
+        ripple.mesh.material.opacity = 0.23 * Math.pow(1 - age / 3.8, 2);
+      }
+    }
+
+    function fishFigurePoint(index, count) {
+      const t = index / count;
+      if (t < 0.65) {
+        const angle = t / 0.65 * Math.PI * 2;
+        return new THREE.Vector3(Math.cos(angle) * 4.1, Math.sin(angle) * 1.25, 0);
+      }
+      const paths = [
+        [[-3.8, 0], [-5.7, 1.8], [-5.1, 0], [-5.7, -1.8], [-3.8, 0]],
+        [[-1.5, 1.17], [-1.8, 2.3], [1.2, 1.2]],
+        [[-0.8, -1.2], [-1.5, -2.1], [1.1, -1.2]]
+      ];
+      const part = (t - 0.65) / 0.35 * 3;
+      const pathIndex = Math.min(2, Math.floor(part));
+      const path = paths[pathIndex];
+      const position = (part - pathIndex) * (path.length - 1);
+      const segment = Math.min(path.length - 2, Math.floor(position));
+      const blend = position - segment;
+      return new THREE.Vector3(THREE.MathUtils.lerp(path[segment][0], path[segment + 1][0], blend),
+        THREE.MathUtils.lerp(path[segment][1], path[segment + 1][1], blend), 0);
+    }
+
+    function animateIslandLife(time, dt) {
+      const motion = reducedMotion ? 0.25 : 1;
+      for (const rock of driftingRocks) {
+        const angle = rock.phase + time * rock.speed * motion;
+        rock.mesh.position.x = Math.cos(angle) * rock.radius + Math.sin(time * 0.13 + rock.phase) * 0.4 * motion;
+        rock.mesh.position.z = Math.sin(angle) * rock.radius;
+        rock.mesh.position.y = rock.y + Math.sin(time * 0.38 + rock.phase) * rock.lift * motion;
+        rock.mesh.rotation.y += dt * 0.025 * motion;
+        rock.mesh.rotation.z = Math.sin(time * 0.16 + rock.phase) * 0.16 * motion;
+      }
+      if (owlHead) {
+        owlHead.rotation.y = Math.sin(time * 0.22) * 0.4 * motion;
+        owlHead.rotation.z = Math.sin(time * 0.37) * 0.045 * motion;
+        const blinkTime = time % 7;
+        const openness = blinkTime < 0.22 ? Math.max(0.08, Math.abs(blinkTime - 0.11) / 0.11) : 1;
+        for (const eye of owlEyes) eye.scale.y = openness;
+      }
+      if (petals) {
+        const positions = petals.geometry.attributes.position.array;
+        for (let i = 0; i < petalData.length; i++) {
+          const data = petalData[i], index = i * 3;
+          positions[index] += (0.25 + Math.sin(time * 0.8 + data.phase) * 0.16) * dt * motion;
+          positions[index + 1] -= data.speed * dt * motion;
+          positions[index + 2] += (0.08 + Math.cos(time * 0.63 + data.phase) * 0.12) * dt * motion;
+          if (positions[index + 1] < 0.65 || Math.hypot(positions[index], positions[index + 2]) > 16) {
+            positions[index] = data.x;
+            positions[index + 1] = 7 + Math.random() * 6;
+            positions[index + 2] = data.z;
+          }
+        }
+        petals.geometry.attributes.position.needsUpdate = true;
+      }
+    }
+
     function createGroundMist() {
       // Soft overlapping horizontal wisps, rather than opaque fog walls.
       const canvas = document.createElement('canvas');
@@ -574,7 +1148,7 @@
       islandGroup.add(mushroomGroup);
 
       // 2. Firefly Particle System (300 particles floating over the island plateau)
-      fireflyCount = 300;
+      fireflyCount = quality.fireflies;
       fireflyGeo = new THREE.BufferGeometry();
       const fireflyPositions = new Float32Array(fireflyCount * 3);
       const fireflyColors = new Float32Array(fireflyCount * 3);
@@ -604,6 +1178,7 @@
 
         fireflyData.push({
           home: new THREE.Vector3(x, y, z),
+          figure: i < swarmCount ? fishFigurePoint(i, swarmCount) : null,
           velocity: new THREE.Vector3(),
           color: color.clone(),
           speed: 0.5 + Math.random(),
@@ -642,7 +1217,7 @@
       camera.updateProjectionMatrix();
 
       renderer.setSize(width, height);
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatio));
 
       if (composer) {
         composer.setPixelRatio(renderer.getPixelRatio());
@@ -657,9 +1232,34 @@
       requestAnimationFrame(animate);
 
       // Smooth camera orbit
-      const dt = Math.min(clock.getDelta(), 0.04);
+      const frameDelta = clock.getDelta();
+      const dt = Math.min(frameDelta, 0.04);
       const time = clock.elapsedTime;
+      // Resume from the user's current orbit and distance without snapping.
+      if (!reducedMotion && !cameraHeld && performance.now() > cameraResumeAt) {
+        cameraBlend = Math.min(1, cameraBlend + dt * 0.2);
+        orbitOffset.copy(camera.position).sub(controls.target);
+        orbitSpherical.setFromVector3(orbitOffset);
+        orbitSpherical.theta += dt * 0.035 * cameraBlend;
+        const targetPolar = 1.08 + Math.sin(time * 0.11) * 0.13;
+        orbitSpherical.phi += (targetPolar - orbitSpherical.phi) * (1 - Math.exp(-dt * 0.3 * cameraBlend));
+        orbitOffset.setFromSpherical(orbitSpherical);
+        camera.position.copy(controls.target).add(orbitOffset);
+      }
       controls.update(dt);
+      // One conservative downgrade for sustained slow frames, excluding hidden tabs.
+      if (!qualityAdjusted && time > 4 && !document.hidden && frameDelta < 0.15) {
+        frameSum += frameDelta;
+        if (++frameSamples >= 180) {
+          if (frameSum / frameSamples > 0.034) {
+            quality.pixelRatio = Math.max(0.85, quality.pixelRatio * 0.75);
+            onWindowResize();
+          }
+          qualityAdjusted = true;
+        }
+      }
+      animateIslandLife(time, dt);
+      animatePondLife(time, dt);
       let cursorHit = false;
       if (pointerActive) {
         raycaster.setFromCamera(pointer, camera);
@@ -673,16 +1273,20 @@
         layer.mesh.material.opacity = 0.22 + Math.sin(time * 0.2 + layer.phase) * 0.05;
       }
       for (const { mesh, rest, phase, amplitude } of crowns) {
-        mesh.position.x = rest.x + Math.sin(time * 0.8 + phase) * amplitude;
-        mesh.position.z = rest.z + Math.sin(time * 0.63 + phase) * amplitude * 0.6;
-        mesh.rotation.z = Math.sin(time * 0.8 + phase) * 0.012;
+        const motion = reducedMotion ? 0.25 : 1;
+        mesh.position.x = rest.x + Math.sin(time * 0.8 + phase) * amplitude * motion;
+        mesh.position.z = rest.z + Math.sin(time * 0.63 + phase) * amplitude * 0.6 * motion;
+        mesh.rotation.z = Math.sin(time * 0.8 + phase) * 0.012 * motion;
       }
-      if (waterSurface) {
+      if (waterSurface && ++waterFrame % (compactDevice ? 3 : 2) === 0) {
+        waterSurface.material.normalMap.offset.set(time * 0.006, time * 0.003);
+        waterSurface.material.clearcoatNormalMap.offset.set(-time * 0.009, time * 0.006);
+        const gust = 0.21 + Math.sin(time * 0.19) * 0.04;
+        waterSurface.material.normalScale.set(gust, gust);
         const position = waterSurface.geometry.attributes.position;
         for (let i = 0; i < position.count; i++) {
           const x = waterRestPositions[i * 3], z = waterRestPositions[i * 3 + 2];
-          position.setY(i, Math.sin(x * 1.3 + z * 0.8 + time * 0.9) * 0.025
-            + Math.cos(z * 1.6 - x * 0.5 + time * 0.7) * 0.018);
+          position.setY(i, waterHeight(x, z, time) - 0.64);
         }
         position.needsUpdate = true;
         waterSurface.geometry.computeVertexNormals();
@@ -692,6 +1296,10 @@
       if (fireflies && fireflyData && fireflyData.length) {
         const positions = fireflies.geometry.attributes.position.array;
         const colors = fireflies.geometry.attributes.color.array;
+        // A rare, camera-facing ghost koi emerges, then dissolves back into the grove.
+        const cycle = time % 64;
+        const formation = reducedMotion ? 0 : THREE.MathUtils.smoothstep(cycle, 12, 19)
+          * (1 - THREE.MathUtils.smoothstep(cycle, 25, 32));
 
         for (let i = 0; i < fireflyCount; i++) {
           const data = fireflyData[i];
@@ -699,30 +1307,39 @@
 
           const x = positions[i3], y = positions[i3 + 1], z = positions[i3 + 2];
           const velocity = data.velocity;
-          velocity.x += ((data.home.x - x) * 0.22
-            + Math.sin(time * data.speed * 0.6 + data.phaseX) * 0.85) * dt;
-          velocity.y += ((data.home.y - y) * 0.35
-            + Math.cos(time * data.speed * 0.7 + data.phaseY) * 0.6) * dt;
-          velocity.z += ((data.home.z - z) * 0.22
-            + Math.sin(time * data.speed * 0.5 + data.phaseZ) * 0.85) * dt;
+          const gathering = data.figure ? formation : 0;
+          swarmTarget.copy(data.home);
+          if (gathering > 0) {
+            swarmTarget.copy(data.figure).applyQuaternion(camera.quaternion).add(swarmCenter);
+            swarmTarget.lerp(data.home, 1 - gathering);
+          }
+          const spring = THREE.MathUtils.lerp(0.22, 3.2, gathering);
+          const wander = 1 - gathering * 0.95;
+          velocity.x += ((swarmTarget.x - x) * spring
+            + Math.sin(time * data.speed * 0.6 + data.phaseX) * 0.85 * wander) * dt;
+          velocity.y += ((swarmTarget.y - y) * (spring + 0.13)
+            + Math.cos(time * data.speed * 0.7 + data.phaseY) * 0.6 * wander) * dt;
+          velocity.z += ((swarmTarget.z - z) * spring
+            + Math.sin(time * data.speed * 0.5 + data.phaseZ) * 0.85 * wander) * dt;
           if (cursorHit) {
             const dx = x - cursorWorld.x, dy = y - cursorWorld.y, dz = z - cursorWorld.z;
             const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
             if (distance < 4.5) {
-              const force = 7 * Math.pow(1 - distance / 4.5, 2) * dt / Math.max(distance, 0.15);
+              const force = 7 * Math.pow(1 - distance / 4.5, 2) * dt * (1 - gathering) / Math.max(distance, 0.15);
               velocity.x += dx * force;
               velocity.y += dy * force;
               velocity.z += dz * force;
             }
           }
-          velocity.multiplyScalar(Math.exp(-0.9 * dt)).clampLength(0, 2.5);
+          velocity.multiplyScalar(Math.exp(-THREE.MathUtils.lerp(0.9, 2.6, gathering) * dt))
+            .clampLength(0, THREE.MathUtils.lerp(2.5, 5, gathering));
           positions[i3] += velocity.x * dt;
           positions[i3 + 1] = Math.max(0.7, y + velocity.y * dt);
           positions[i3 + 2] += velocity.z * dt;
           const pulse = 1.5 + Math.pow(0.5 + 0.5 * Math.sin(time * data.speed * 1.8 + data.phaseY), 3) * 3;
-          colors[i3] = data.color.r * pulse;
-          colors[i3 + 1] = data.color.g * pulse;
-          colors[i3 + 2] = data.color.b * pulse;
+          colors[i3] = THREE.MathUtils.lerp(data.color.r, swarmColor.r, gathering) * pulse;
+          colors[i3 + 1] = THREE.MathUtils.lerp(data.color.g, swarmColor.g, gathering) * pulse;
+          colors[i3 + 2] = THREE.MathUtils.lerp(data.color.b, swarmColor.b, gathering) * pulse;
         }
 
         fireflies.geometry.attributes.position.needsUpdate = true;
@@ -764,5 +1381,6 @@
     watchLocalSource();
   }
 </script>
+<script type="module" src="./night-audio.js"></script>
 </body>
 </html>

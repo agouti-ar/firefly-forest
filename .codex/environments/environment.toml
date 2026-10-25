@@ -1,0 +1,10 @@
+version = 1
+name = "firefly-forest"
+
+[setup]
+script = ""
+
+[[actions]]
+name = "Live Preview"
+icon = "run"
+command = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\start-preview.ps1'
