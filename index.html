@@ -28,18 +28,39 @@
       display: block;
       outline: none;
     }
-    .night-audio-toggle {
+    .night-audio-controls {
       position: fixed;
-      bottom: 18px;
-      left: 18px;
+      bottom: max(16px, env(safe-area-inset-bottom));
+      left: max(16px, env(safe-area-inset-left));
       z-index: 2;
-      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 4px 12px 4px 4px;
       border: 1px solid rgba(174, 214, 231, 0.25);
       border-radius: 24px;
       background: rgba(7, 19, 34, 0.82);
+    }
+    .night-audio-toggle {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-width: 112px;
+      min-height: 44px;
+      padding: 8px 12px;
+      border: 1px solid transparent;
+      border-radius: 22px;
+      background: transparent;
       color: #c8dce6;
       font: 13px system-ui, sans-serif;
       cursor: pointer;
+    }
+    .night-audio-volume { width: 80px; min-height: 44px; accent-color: #85c9bf; cursor: pointer; }
+    .night-audio-volume:focus-visible { outline: 2px solid #9fe5df; border-radius: 8px; }
+    @media (max-width: 480px) {
+      .night-audio-controls { left: 10px; bottom: max(10px, env(safe-area-inset-bottom)); gap: 4px; }
+      .night-audio-volume { width: 64px; }
     }
     .night-audio-toggle:focus-visible { outline: 2px solid #9fe5df; outline-offset: 3px; }
     .night-audio-toggle[aria-pressed="true"] { border-color: #85c9bf; }
@@ -67,6 +88,8 @@
     import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
     import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
     import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
+    import { makeForestDetails } from './forest-details.js';
+    const details = makeForestDetails(THREE);
 
     /**
      * Application Singletons & State
@@ -97,7 +120,12 @@
     const swarmTarget = new THREE.Vector3();
     let waterEnvironmentTarget;
     let petals, owlHead, owlEyes, waterFrame = 0;
-    let cameraHeld = false, cameraResumeAt = 0, cameraBlend = 0;
+    const owlWings = [];
+    let owlTorso, moon;
+    let cameraHeld = false, cameraResumeAt = 0;
+    const overviewTarget = new THREE.Vector3(0, 1, 0);
+    let overviewRadius = 56, overviewTheta = Math.PI / 4;
+    let returnToOverview = false, cameraReturn = null;
     let frameSum = 0, frameSamples = 0, qualityAdjusted = false;
     const orbitOffset = new THREE.Vector3();
     const orbitSpherical = new THREE.Spherical();
@@ -111,13 +139,17 @@
       // 1. Night sky and atmospheric depth
       scene = new THREE.Scene();
       setupNightSky();
+      moon = details.createMoon();
+      moon.update(0);
+      scene.add(moon.mesh);
       scene.fog = new THREE.FogExp2(0x101e36, 0.009);
 
       // 2. Camera Setup (Patch 4: Isometric angle overlooking the diorama)
       const aspect = window.innerWidth / window.innerHeight;
-      camera = new THREE.PerspectiveCamera(45, aspect, 0.1, 180);
-      const framing = aspect < 1 ? Math.min(1.65, 1 / Math.sqrt(aspect)) : 1;
-      camera.position.set(36 * framing, 24 * framing, 36 * framing);
+      camera = new THREE.PerspectiveCamera(aspect < 1 ? 50 : 45, aspect, 0.2, 600);
+      overviewRadius = Math.max(56, 29 / (Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * aspect));
+      const framing = overviewRadius / Math.hypot(36, 23, 36);
+      camera.position.set(36 * framing, 1 + 23 * framing, 36 * framing);
 
       // 3. Renderer with ACES Filmic Tone Mapping & Soft Shadows
       renderer = new THREE.WebGLRenderer({
@@ -140,16 +172,18 @@
       controls.autoRotateSpeed = 0.5; // Slow, majestic diorama rotation
       controls.maxPolarAngle = Math.PI / 2.2; // Keep camera above horizon
       controls.minDistance = 10;
-      controls.maxDistance = 100;
+      controls.maxDistance = 180;
       controls.enableDamping = true;
       controls.dampingFactor = 0.05;
       controls.addEventListener('start', () => {
         cameraHeld = true;
-        cameraBlend = 0;
+        returnToOverview = true;
+        cameraReturn = null;
       });
       controls.addEventListener('end', () => {
         cameraHeld = false;
-        cameraResumeAt = performance.now() + 12000;
+        cameraResumeAt = performance.now() + 5000;
+        cameraReturn = null;
       });
 
       // 5. Build Diorama Entities
@@ -160,6 +194,7 @@
       createGroundMist();
       createIslandLife();
       createPondLife();
+      details.setAnisotropy(Math.min(compactDevice ? 4 : 8, renderer.capabilities.getMaxAnisotropy()));
       captureWaterReflections();
 
       // 6. Post-processing Pipeline: UnrealBloomPass & OutputPass (Calibrated for crisp diorama)
@@ -185,6 +220,10 @@
         pointer.set((event.clientX - rect.left) / rect.width * 2 - 1,
           -(event.clientY - rect.top) / rect.height * 2 + 1);
         pointerActive = true;
+        if (returnToOverview && !cameraHeld) {
+          cameraResumeAt = performance.now() + 5000;
+          cameraReturn = null;
+        }
       });
       canvas.addEventListener('pointerleave', () => { pointerActive = false; });
       window.addEventListener('blur', () => { pointerActive = false; });
@@ -216,8 +255,8 @@
         const azimuth = Math.random() * Math.PI * 2;
         const elevation = Math.random();
         const ring = Math.sqrt(1 - elevation * elevation);
-        positions.push(110 * ring * Math.cos(azimuth), 110 * elevation,
-          110 * ring * Math.sin(azimuth));
+        positions.push(240 * ring * Math.cos(azimuth), 240 * elevation,
+          240 * ring * Math.sin(azimuth));
         const brightness = 0.25 + Math.random() * 0.55;
         colors.push(brightness * 0.8, brightness * 0.9, brightness);
       }
@@ -225,7 +264,7 @@
       geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
       geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
       scene.add(new THREE.Points(geometry, new THREE.PointsMaterial({
-        size: 0.19, vertexColors: true, transparent: true, opacity: 0.85,
+        size: 0.36, vertexColors: true, transparent: true, opacity: 0.85,
         fog: false, depthWrite: false
       })));
     }
@@ -344,7 +383,10 @@
       grassGeo.computeVertexNormals();
       const grassMat = new THREE.MeshStandardMaterial({
         vertexColors: true,
-        roughness: 0.8,
+        map: details.surfaceTexture('soil'),
+        bumpMap: details.surfaceTexture('soil'),
+        bumpScale: 0.055,
+        roughness: 0.95,
         flatShading: true
       });
       const grassTop = new THREE.Mesh(grassGeo, grassMat);
@@ -452,7 +494,10 @@
       const trunkGeo = new THREE.CylinderGeometry(0.25 * scale, 0.8 * scale, visibleTrunkHeight, 6);
       const trunkMat = new THREE.MeshStandardMaterial({
         color: 0x4a2c2a,
-        roughness: 0.8,
+        map: details.surfaceTexture('bark'),
+        bumpMap: details.surfaceTexture('bark'),
+        bumpScale: 0.035,
+        roughness: 0.92,
         flatShading: true
       });
       const trunk = new THREE.Mesh(trunkGeo, trunkMat);
@@ -467,15 +512,29 @@
       // Blooming pink cherry blossom foliage clusters
       const leafMat = new THREE.MeshStandardMaterial({
         color: 0xffb7c5,          // Delicate cherry blossom pink
-        roughness: 0.6,
-        flatShading: true,
+        map: details.surfaceTexture('leaves'),
+        roughness: 0.9,
+        flatShading: false,
         emissive: 0x331122,       // Subtle warm internal glow for bloom catching
         emissiveIntensity: 0.04
       });
 
       const numLeafClusters = 6 + Math.floor(Math.random() * 4);
       for (let i = 0; i < numLeafClusters; i++) {
-        const leafGeo = new THREE.IcosahedronGeometry((1.2 + Math.random() * 1.2) * scale, 1);
+        const leafGeo = new THREE.IcosahedronGeometry((1.2 + Math.random() * 1.2) * scale, compactDevice ? 1 : 2);
+        const vertices = leafGeo.attributes.position;
+        for (let v = 0; v < vertices.count; v++) {
+          const x = vertices.getX(v), y = vertices.getY(v), z = vertices.getZ(v);
+          const variation = 1 + Math.sin(x * 3.1 + y * 2.3) * Math.cos(z * 3.4) * 0.055;
+          vertices.setXYZ(v, x * variation, y * variation, z * variation);
+        }
+        leafGeo.computeVertexNormals();
+        const normals = leafGeo.attributes.normal;
+        for (let v = 0; v < vertices.count; v++) {
+          const x = vertices.getX(v), y = vertices.getY(v), z = vertices.getZ(v);
+          const length = Math.hypot(x, y, z);
+          normals.setXYZ(v, x / length, y / length, z / length);
+        }
         const leaves = new THREE.Mesh(leafGeo, leafMat);
 
         const angle = (i / numLeafClusters) * Math.PI * 2 + Math.random();
@@ -731,8 +790,11 @@
       const owl = new THREE.Group();
       owl.position.set(8.3, 3.65, 8);
       owl.rotation.y = 0.45;
-      const feathers = new THREE.MeshStandardMaterial({ color: 0x73695f, roughness: 0.95, flatShading: true });
+      const feathers = new THREE.MeshStandardMaterial({ color: 0x73695f, roughness: 0.95,
+        map: details.surfaceTexture('feathers') });
       const pale = new THREE.MeshStandardMaterial({ color: 0xa89e89, roughness: 1 });
+      const breast = pale.clone();
+      breast.map = details.surfaceTexture('feathers');
       const dark = new THREE.MeshStandardMaterial({ color: 0x313047, roughness: 0.85 });
       const gold = new THREE.MeshStandardMaterial({ color: 0xe5b96b, emissive: 0x80511d, emissiveIntensity: 0.15, roughness: 0.35 });
       const shape = (parent, geometry, material, position, scale) => {
@@ -743,12 +805,16 @@
         parent.add(mesh);
         return mesh;
       };
-      const sphere = new THREE.SphereGeometry(1, 12, 8);
-      shape(owl, sphere, feathers, [0, 0.72, 0], [0.48, 0.68, 0.38]);
-      shape(owl, sphere, pale, [0, 0.7, 0.25], [0.33, 0.48, 0.17]);
+      const sphere = new THREE.SphereGeometry(1, 16, 12);
+      owlTorso = shape(owl, sphere, feathers, [0, 0.72, 0], [0.46, 0.65, 0.37]);
+      shape(owl, sphere, breast, [0, 0.7, 0.25], [0.31, 0.46, 0.16]);
       for (const side of [-1, 1]) {
-        const wing = shape(owl, sphere, dark, [side * 0.37, 0.7, 0], [0.19, 0.48, 0.32]);
-        wing.rotation.z = side * 0.15;
+        const hinge = new THREE.Group();
+        hinge.position.set(side * 0.33, 0.98, 0);
+        owl.add(hinge);
+        shape(hinge, sphere, feathers, [side * 0.04, -0.28, 0], [0.18, 0.48, 0.3]);
+        hinge.rotation.z = side * 0.15;
+        owlWings.push({ hinge, side });
         shape(owl, sphere, gold, [side * 0.2, 0.1, 0.12], [0.13, 0.07, 0.18]);
       }
       owlHead = new THREE.Group();
@@ -757,7 +823,7 @@
       shape(owlHead, sphere, feathers, [0, 0, 0], [0.45, 0.4, 0.36]);
       owlEyes = [];
       for (const side of [-1, 1]) {
-        shape(owlHead, sphere, pale, [side * 0.18, 0, 0.28], [0.2, 0.23, 0.09]);
+        shape(owlHead, sphere, pale, [side * 0.18, 0, 0.28], [0.175, 0.23, 0.075]);
         const eye = new THREE.Group();
         eye.position.set(side * 0.18, 0.02, 0.36);
         owlHead.add(eye);
@@ -887,11 +953,9 @@
 
       const padMaterial = new THREE.MeshStandardMaterial({ color: 0x4e7945,
         roughness: 0.55, side: THREE.DoubleSide });
-      const petalMaterial = new THREE.MeshStandardMaterial({ color: 0xe6c2d9, roughness: 0.65 });
-      const pollen = new THREE.MeshStandardMaterial({ color: 0xd0ad58, roughness: 0.65 });
-      for (let i = 0; i < 10; i++) {
+      for (let i = 0; i < 14; i++) {
         const pad = new THREE.Group();
-        const angle = 0.25 + i * Math.PI * 2 / 10;
+        const angle = 0.25 + i * Math.PI * 2 / 14;
         const point = pondPoint(angle, i % 2 ? 0.19 : 0.81);
         const radius = 0.4 + (i % 3) * 0.1;
         const shape = new THREE.Shape();
@@ -899,33 +963,16 @@
         shape.lineTo(Math.cos(0.17) * radius, Math.sin(0.17) * radius);
         shape.absarc(0, 0, radius, 0.17, Math.PI * 2 - 0.17, false);
         shape.lineTo(0, 0);
-        const lotus = i % 3 === 0;
-        const leaf = new THREE.Mesh(lotus ? new THREE.CircleGeometry(radius, 32)
-          : new THREE.ShapeGeometry(shape, 24), padMaterial);
+        const leaf = new THREE.Mesh(new THREE.ShapeGeometry(shape, 32), padMaterial);
         leaf.rotation.x = -Math.PI / 2;
-        leaf.position.y = lotus ? 0.06 : 0;
+        leaf.position.y = 0;
         leaf.rotation.z = i * 0.7;
         leaf.receiveShadow = true;
         pad.add(leaf);
         if (i % 3 === 0) {
-          const flower = new THREE.Group();
-          flower.position.y = 0.48 + (i % 2) * 0.13;
+          const flower = details.createLilyFlower(compactDevice);
+          flower.position.y = 0.045;
           pad.add(flower);
-          const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.025,
-            flower.position.y, 5), padMaterial);
-          stem.position.y = flower.position.y / 2;
-          pad.add(stem);
-          for (let p = 0; p < 12; p++) {
-            const angle = p / 6 * Math.PI;
-            const layer = p < 6 ? 0 : 1;
-            const petal = addEllipsoid(flower, petalMaterial,
-              [Math.cos(angle) * (0.14 - layer * 0.05), 0.09 + layer * 0.08,
-                Math.sin(angle) * (0.14 - layer * 0.05)],
-              [0.075, 0.07 + layer * 0.04, 0.19 - layer * 0.04]);
-            petal.rotation.y = Math.PI / 2 - angle;
-            petal.rotation.x = 0.2;
-          }
-          addEllipsoid(flower, pollen, [0, 0.17, 0], [0.085, 0.055, 0.085]);
         }
         pad.position.copy(point);
         scene.add(pad);
@@ -936,10 +983,11 @@
       const eyeMaterial = new THREE.MeshStandardMaterial({ color: 0xbfa665, roughness: 0.4 });
       for (let i = 0; i < 2; i++) {
         const frog = new THREE.Group();
+        const legs = [];
         const body = addEllipsoid(frog, frogSkin, [0, 0.12, 0], [0.19, 0.12, 0.25]);
         addEllipsoid(frog, frogSkin, [0, 0.18, 0.2], [0.18, 0.12, 0.15]);
         for (const side of [-1, 1]) {
-          addEllipsoid(frog, frogSkin, [side * 0.18, 0.08, -0.12], [0.13, 0.085, 0.17]);
+          legs.push(addEllipsoid(frog, frogSkin, [side * 0.18, 0.08, -0.12], [0.13, 0.085, 0.17]));
           addEllipsoid(frog, frogSkin, [side * 0.16, 0.035, 0.23], [0.06, 0.025, 0.1]);
           addEllipsoid(frog, eyeMaterial, [side * 0.1, 0.28, 0.25], [0.055, 0.055, 0.05]);
           addEllipsoid(frog, charcoal, [side * 0.1, 0.28, 0.292], [0.027, 0.027, 0.018]);
@@ -947,7 +995,7 @@
         frog.rotation.y = i * 2.3;
         frog.position.y = 0.025;
         lilyPads[i === 0 ? 1 : 5].mesh.add(frog);
-        frogs.push({ body, phase: i * 2.1 });
+        frogs.push({ body, rig: frog, legs, phase: i * 2.1, hopOffset: i * 11, hopping: false });
       }
       const ringGeometry = new THREE.RingGeometry(0.96, 1, 48);
       for (let i = 0; i < 8; i++) {
@@ -967,7 +1015,7 @@
       // One environment capture supplies subtle canopy/sky reflections without
       // six extra scene renders every frame. Light highlights remain dynamic.
       waterEnvironmentTarget = new THREE.WebGLCubeRenderTarget(128, { type: THREE.HalfFloatType });
-      const capture = new THREE.CubeCamera(0.1, 180, waterEnvironmentTarget);
+      const capture = new THREE.CubeCamera(0.1, 500, waterEnvironmentTarget);
       capture.position.set(0, 2, 15);
       const hidden = [waterSurface, fireflies, petals, ...mistLayers.map(layer => layer.mesh)];
       const visibility = hidden.map(object => object.visible);
@@ -1001,6 +1049,11 @@
         fish.shadow.material.opacity = 0.3 / (1 + lift * 1.5);
         fish.mesh.rotation.x = jumping ? -Math.cos(jumpPhase * Math.PI) * 0.55 : Math.sin(time * 2 + i) * 0.025;
         fish.tail.rotation.y = Math.sin(time * 6 * motion + i) * 0.35;
+        if (jumping !== fish.jumping) {
+          window.dispatchEvent(new CustomEvent('pond-splash', {
+            detail: { x: point.x, z: point.z, strength: jumping ? 0.4 : 1 }
+          }));
+        }
         if ((fish.jumping && !jumping) || (time - fish.lastWake > 4.5 && !jumping)) {
           emitWaterRipple(point.x, point.z, time);
           fish.lastWake = time;
@@ -1012,7 +1065,17 @@
         pad.mesh.rotation.x = Math.sin(time * 0.65 + pad.phase) * 0.035 * motion;
         pad.mesh.rotation.z = Math.cos(time * 0.5 + pad.phase) * 0.025 * motion;
       }
-      for (const frog of frogs) frog.body.scale.y = 0.12 * (1 + Math.sin(time * 2 + frog.phase) * 0.035);
+      for (const frog of frogs) {
+        frog.body.scale.y = 0.12 * (1 + Math.sin(time * 2 + frog.phase) * 0.035);
+        const cycle = (time + frog.hopOffset) % 26;
+        const hopping = !reducedMotion && cycle > 9 && cycle < 10.1;
+        const hop = hopping ? Math.sin((cycle - 9) / 1.1 * Math.PI) : 0;
+        frog.rig.position.y = 0.025 + hop * 0.35;
+        frog.rig.rotation.x = hop * -0.18;
+        for (const leg of frog.legs) leg.rotation.x = -hop * 0.5;
+        if (frog.hopping && !hopping) window.dispatchEvent(new CustomEvent('pond-frog'));
+        frog.hopping = hopping;
+      }
       for (const ripple of waterRipples) {
         const age = time - ripple.start;
         ripple.mesh.visible = age >= 0 && age < 3.8;
@@ -1055,6 +1118,11 @@
         rock.mesh.rotation.z = Math.sin(time * 0.16 + rock.phase) * 0.16 * motion;
       }
       if (owlHead) {
+        const cycle = time % 28;
+        const stretch = reducedMotion ? 0 : THREE.MathUtils.smoothstep(cycle, 9, 10.4)
+          * (1 - THREE.MathUtils.smoothstep(cycle, 11.8, 13.5));
+        for (const { hinge, side } of owlWings) hinge.rotation.z = side * (0.15 + stretch * 0.75);
+        owlTorso.scale.y = 0.65 * (1 + Math.sin(time * 1.2) * 0.015);
         owlHead.rotation.y = Math.sin(time * 0.22) * 0.4 * motion;
         owlHead.rotation.z = Math.sin(time * 0.37) * 0.045 * motion;
         const blinkTime = time % 7;
@@ -1092,7 +1160,7 @@
       const texture = new THREE.CanvasTexture(canvas);
       texture.colorSpace = THREE.SRGBColorSpace;
       const geometry = new THREE.PlaneGeometry(1, 1);
-      for (let i = 0; i < 16; i++) {
+      for (let i = 0; i < (compactDevice ? 10 : 16); i++) {
         const material = new THREE.MeshBasicMaterial({
           map: texture, color: 0x91b2d5, transparent: true, opacity: 0.25,
           depthWrite: false, side: THREE.DoubleSide
@@ -1107,6 +1175,16 @@
         const y = 0.8 + Math.random() * 1.2;
         mist.position.set(x, y, z);
         mistLayers.push({ mesh: mist, x, y, z, phase: angle });
+        scene.add(mist);
+      }
+      for (let i = 0; i < (compactDevice ? 5 : 8); i++) {
+        const angle = i * 2.39996;
+        const mist = new THREE.Sprite(new THREE.SpriteMaterial({
+          map: texture, color: 0x86a6c5, transparent: true, opacity: 0.12, depthWrite: false
+        }));
+        mist.scale.set(8 + i % 3, 3.5, 1);
+        mistLayers.push({ mesh: mist, spill: true, angle,
+          radius: islandOutline(angle) + 0.4, phase: i / 8 });
         scene.add(mist);
       }
     }
@@ -1209,11 +1287,40 @@
     /**
      * Viewport Resize Event Handler
      */
+    function updateCinematicCamera(time, dt, now) {
+      if (reducedMotion || cameraHeld || now < cameraResumeAt) return;
+      const polar = 1.08 + Math.sin(time * 0.08) * 0.08;
+      orbitOffset.copy(camera.position).sub(controls.target);
+      orbitSpherical.setFromVector3(orbitOffset);
+      if (returnToOverview) {
+        if (!cameraReturn) {
+          cameraReturn = { start: now, spherical: orbitSpherical.clone(), target: controls.target.clone() };
+          cameraReturn.turn = Math.atan2(Math.sin(overviewTheta - orbitSpherical.theta),
+            Math.cos(overviewTheta - orbitSpherical.theta));
+        }
+        const progress = THREE.MathUtils.clamp((now - cameraReturn.start) / 3500, 0, 1);
+        const ease = THREE.MathUtils.smootherstep(progress, 0, 1);
+        controls.target.copy(cameraReturn.target).lerp(overviewTarget, ease);
+        orbitSpherical.radius = THREE.MathUtils.lerp(cameraReturn.spherical.radius, overviewRadius, ease);
+        orbitSpherical.phi = THREE.MathUtils.lerp(cameraReturn.spherical.phi, polar, ease);
+        orbitSpherical.theta = cameraReturn.spherical.theta + cameraReturn.turn * ease;
+        if (progress === 1) { returnToOverview = false; cameraReturn = null; }
+      } else {
+        overviewTheta += dt * 0.048;
+        controls.target.copy(overviewTarget);
+        orbitSpherical.set(overviewRadius, polar, overviewTheta);
+      }
+      orbitOffset.setFromSpherical(orbitSpherical);
+      camera.position.copy(controls.target).add(orbitOffset);
+    }
+
     function onWindowResize() {
       const width = window.innerWidth;
       const height = window.innerHeight;
 
       camera.aspect = width / height;
+      camera.fov = camera.aspect < 1 ? 50 : 45;
+      overviewRadius = Math.max(56, 29 / (Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * camera.aspect));
       camera.updateProjectionMatrix();
 
       renderer.setSize(width, height);
@@ -1235,18 +1342,9 @@
       const frameDelta = clock.getDelta();
       const dt = Math.min(frameDelta, 0.04);
       const time = clock.elapsedTime;
-      // Resume from the user's current orbit and distance without snapping.
-      if (!reducedMotion && !cameraHeld && performance.now() > cameraResumeAt) {
-        cameraBlend = Math.min(1, cameraBlend + dt * 0.2);
-        orbitOffset.copy(camera.position).sub(controls.target);
-        orbitSpherical.setFromVector3(orbitOffset);
-        orbitSpherical.theta += dt * 0.035 * cameraBlend;
-        const targetPolar = 1.08 + Math.sin(time * 0.11) * 0.13;
-        orbitSpherical.phi += (targetPolar - orbitSpherical.phi) * (1 - Math.exp(-dt * 0.3 * cameraBlend));
-        orbitOffset.setFromSpherical(orbitSpherical);
-        camera.position.copy(controls.target).add(orbitOffset);
-      }
+      updateCinematicCamera(time, dt, performance.now());
       controls.update(dt);
+      if (moon) moon.update(time);
       // One conservative downgrade for sustained slow frames, excluding hidden tabs.
       if (!qualityAdjusted && time > 4 && !document.hidden && frameDelta < 0.15) {
         frameSum += frameDelta;
@@ -1267,10 +1365,18 @@
         cursorHit = cursorHit && cursorWorld.lengthSq() < 24 * 24;
       }
       for (const layer of mistLayers) {
+        if (layer.spill) {
+          const travel = (time * 0.025 + layer.phase) % 1;
+          const radius = layer.radius + travel * 3;
+          layer.mesh.position.set(Math.cos(layer.angle) * radius + Math.sin(time * 0.12) * 0.4,
+            -0.6 - travel * 3.5, Math.sin(layer.angle) * radius);
+          layer.mesh.material.opacity = Math.sin(travel * Math.PI) * 0.22;
+          continue;
+        }
         layer.mesh.position.set(layer.x + Math.sin(time * 0.09 + layer.phase) * 1.5,
           layer.y + Math.sin(time * 0.15 + layer.phase) * 0.15,
           layer.z + Math.cos(time * 0.07 + layer.phase) * 0.8);
-        layer.mesh.material.opacity = 0.22 + Math.sin(time * 0.2 + layer.phase) * 0.05;
+        layer.mesh.material.opacity = 0.27 + Math.sin(time * 0.2 + layer.phase) * 0.05;
       }
       for (const { mesh, rest, phase, amplitude } of crowns) {
         const motion = reducedMotion ? 0.25 : 1;
@@ -1364,9 +1470,11 @@
     let previousSource;
     async function watchLocalSource() {
       try {
-        const response = await fetch(location.href, { cache: 'no-store' });
-        if (response.ok) {
-          const source = await response.text();
+        const sources = [location.href, new URL('./ambient-audio.js', document.baseURI).href,
+          new URL('./forest-details.js', document.baseURI).href];
+        const responses = await Promise.all(sources.map(url => fetch(url, { cache: 'no-store' })));
+        if (responses.every(response => response.ok)) {
+          const source = (await Promise.all(responses.map(response => response.text()))).join('\n');
           if (previousSource !== undefined && source !== previousSource) {
             location.reload();
             return;
@@ -1381,6 +1489,6 @@
     watchLocalSource();
   }
 </script>
-<script type="module" src="./night-audio.js"></script>
+<script type="module" src="./ambient-audio.js"></script>
 </body>
 </html>

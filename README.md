@@ -11,16 +11,17 @@ A procedural Three.js night diorama: a sakura grove on a floating asteroid, surr
 - Cold moonlight, blue fill and a subtle underside rim light.
 - HDR firefly and mushroom glow through UnrealBloomPass; OutputPass handles the final tone mapping.
 - Translucent wind-driven water, two moving ripple scales and circular wakes. Desktop water also uses a one-time environment reflection capture; light highlights and waves remain animated.
-- Two swimming koi with moving tails and occasional small jumps, ten floating leaves, four raised lotus flowers and two quietly breathing frogs. Fish contact shadows sit directly underneath them on the submerged bed.
-- Optional quiet procedural Web Audio ambience: crickets, a soft rustle and rare frog calls. Toggle it with the lower-left sound button; audio starts off and pauses in background tabs.
+- Two swimming koi, fourteen floating leaves, five low water-lily blooms with curved pointed petals, and two breathing frogs that occasionally hop. Fish contact shadows stay directly beneath them.
+- Optional layered Web Audio ambience: a continuous cricket chorus, frequent overlapping frog calls, flowing water and splash effects synchronized with koi jumps. The English Sound on/off control includes a volume slider, remembers volume, and supports touch screens. Audio starts off and pauses in background tabs.
+- Slightly denser ground mist dispersing below the island edges. A cratered moon drifts slowly; its artistic phase cycle takes twelve minutes rather than following astronomical time.
 - Every 64 seconds, part of the firefly swarm gathers into a pale luminous fish above the grove. Gathering begins around 12 seconds after loading, reaches its clearest shape around 19–25 seconds, and dissolves by 32 seconds.
-- Independently swaying sakura crowns and slowly falling petals.
-- A small procedural owl that turns its head and blinks on a branch.
+- Procedural soil and bark grain, softly irregular textured sakura crowns and falling petals.
+- A more detailed owl with patterned feathers, head turns, blinking and occasional wing stretches.
 - Cinematic orbit with a gradual change in elevation.
 
 ## Controls
 
-Drag to orbit, scroll/pinch to zoom. Fireflies gently avoid the mouse pointer over the island. Camera automation pauses during interaction and for 12 seconds afterwards, then smoothly resumes from the current view. Reduced-motion preferences disable the automatic camera and reduce ambient movement.
+Drag to orbit, scroll/pinch to zoom. Fireflies gently avoid the mouse pointer over the island. After five seconds without camera interaction, the camera returns to the overview over 3.5 seconds, then resumes its orbit (about 131 seconds per revolution). Mouse movement during inspection postpones the return. Reduced-motion preferences disable automatic camera motion and animal jumps.
 
 ## Run locally
 
@@ -36,7 +37,7 @@ Requires Python 3 and an internet connection for the pinned Three.js CDN modules
 python -u preview_server.py
 ```
 
-Open http://127.0.0.1:8080/ once. On localhost, the page checks its HTML source every two seconds and reloads the same tab when the file changes. After adding this feature to an already open page, refresh that page once. GitHub Pages does not run the reload watcher.
+Open http://127.0.0.1:8080/ once. On localhost, the page checks its HTML and local scene/audio modules every two seconds and reloads the same tab when they change. GitHub Pages does not run the reload watcher.
 
 ## Rendering and performance
 
@@ -57,7 +58,8 @@ Water normals update every second frame on desktop and every third frame on comp
 ## Files
 
 - `index.html`: scene, procedural models, materials, animation and local preview watcher.
-- `night-audio.js`: opt-in synthesized night ambience with no audio downloads.
+- `ambient-audio.js`: opt-in synthesized night ambience and synchronized pond sounds.
+- `forest-details.js`: procedural textures, curved flower geometry and the phased moon.
 - `README.md`: current scene and development instructions.
 - `preview_server.py`: local server with disabled browser caching.
 - `start-preview.cmd` / `start-preview.ps1`: terminal launchers.
