@@ -8,15 +8,16 @@ A procedural Three.js night diorama: a sakura grove on a floating asteroid, surr
 
 - Irregular faceted rock underside, downward shards, soil and moss shore.
 - Tapered roots, dense trailing vines, ferns and an orbiting cloud of differently sized rock fragments.
-- Cold moonlight, blue fill and a subtle underside rim light.
+- Cold moonlight, blue fill, a restrained amber underside rim from the nebula side, and a soft crown-light lift during zodiac formations.
 - HDR firefly and mushroom glow through UnrealBloomPass; OutputPass handles the final tone mapping.
 - Translucent wind-driven water, two moving ripple scales and circular wakes. Desktop water also uses a one-time environment reflection capture; light highlights and waves remain animated.
 - Two swimming koi, twenty floating leaves and ten open water-lily blooms (sixteen/eight on compact devices), and two breathing frogs that occasionally hop. Fish contact shadows stay directly beneath them.
 - Optional Web Audio ambience uses CC0 field recordings of insects and frogs, a stream, and rare owl calls, with wind and splash effects synchronized with koi jumps. Recordings load only after enabling sound; synthesized ambience remains a fallback. The English Sound on/off control includes a volume slider, remembers volume, and supports touch screens. Audio starts off and pauses in background tabs. See AUDIO-CREDITS.md for sources.
-- Airy ground mist disperses below the island edges. A cratered moon with dark maria and a soft halo completes an artistic phase cycle in 90 seconds and drifts around the sky in eight minutes. Its light direction and shadows follow its movement. A faint nebula adds depth.
-- A 146-second firefly cycle opens with a luminous koi, then morphs through all twelve zodiac glyphs, eight seconds per sign, before dispersing. An additional twenty-second rest leaves the swarm in the grove between performances. Tree canopy and trunk colliders keep particles outside the trees, including during formation transitions.
+- Airy ground mist disperses below the island edges. A cratered moon with dark maria and a soft halo completes an artistic phase cycle in 90 seconds and drifts around the sky in eight minutes. Its light direction and shadows follow its movement.
+- A world-fixed, one-sided cosmic horizon mixes muted amber cliffs, smoky carmine, indigo and a faint diagonal dust band. The upper sky stays dark blue. Its texture is baked once at startup. A shooting star with a soft head and tapered luminous ribbon appears for 2.6 seconds every sixteen seconds, starting five seconds after loading. Each launch selects an upper corner of the current view, then follows a fixed world path; reduced-motion mode disables it.
+- A 137-second firefly cycle opens with a luminous koi, then morphs through all twelve zodiac glyphs, eight seconds per sign, before dispersing. Descent finishes at second 126; the next ascent starts four seconds into the following cycle, leaving fifteen seconds of rest in the grove. Captions resolve from soft focus during the last 0.7 seconds of each 2.5-second morph, then stay pixel-aligned and still. Changes are hidden by fades. A few low fireflies on the nebula side have amber colouring. Tree canopy and trunk colliders keep particles outside the trees, including during formation transitions.
 - Procedural soil and bark grain, softly irregular textured sakura crowns and falling petals.
-- A more detailed owl with patterned feathers, blinking and occasional wing stretches. It swivels toward the clearing and looks up during the firefly performance.
+- A more detailed owl with patterned feathers, blinking, small natural head turns and occasional wing stretches.
 - Cinematic orbit with a gradual change in elevation.
 
 ## Controls
@@ -24,6 +25,8 @@ A procedural Three.js night diorama: a sakura grove on a floating asteroid, surr
 Drag to orbit, scroll/pinch to zoom. Fireflies gently avoid the mouse pointer over the island. Close-up inspection has gentle camera sway. After five seconds without camera interaction, the camera returns to the view saved before zooming over 3.5 seconds, then resumes its orbit (about 95 seconds per revolution). Mouse movement during inspection postpones the return. Reduced-motion preferences disable automatic camera motion and animal jumps.
 
 The audio listener follows the camera at 20 Hz. Separate world-positioned forest and water zones, the owl's perch, and each fish splash use distance attenuation and stereo direction. Wind has a broader range than local pond sounds. The night field recording contains both insects and frogs; it is positioned as a mixed habitat recording, not separated into individual animals. While recordings load, only the wind bed plays; synthetic calls are used only if loading fails.
+
+The insect zones have a gentle treble reduction and distance-dependent low-pass filtering. They additionally fade out between 55 and 140 world units, independently of the water zones (80–200 units).
 
 ## Run locally
 
@@ -64,6 +67,7 @@ Water normals update every second frame on desktop and every third frame on comp
 - `assets/audio/` and `AUDIO-CREDITS.md`: bundled CC0 recordings and attribution.
 - `forest-details.js`: procedural textures, curved flower geometry, nebula and the phased moon.
 - `swarm-patterns.js`: sampled vector silhouettes of twelve zodiac glyphs.
+- `cosmic-sky.js`: baked cosmic horizon, diagonal dust band and a reusable meteor trail.
 - `firefly-avoidance.js`: tree collision volumes, steering and particle projection.
 - `README.md`: current scene and development instructions.
 - `preview_server.py`: local server with disabled browser caching.

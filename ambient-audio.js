@@ -29,6 +29,7 @@ let context, master, splashBuffer, scheduler, enabled = false;
 let cricketTimes = [], frogTimes = [];
 let naturalReady = false, naturalBuffers = {}, nextOwl = 0;
 let listenerPose;
+const spatialBeds = new Set();
 const owlPosition = [8.3, 4.95, 8];
 
 // World units match the Three.js scene. Equal-power panning avoids expensive HRTF convolution.
@@ -61,6 +62,13 @@ function updateListener() {
     listener.setPosition(...position);
     listener.setOrientation(...forward, ...up);
   }
+  for (const bed of spatialBeds) {
+    const distance = Math.hypot(...bed.position.map((coordinate, i) => coordinate - position[i]));
+    const t = Math.max(0, Math.min(1, (distance - bed.fadeStart) / (bed.fadeEnd - bed.fadeStart)));
+    bed.fade.gain.setTargetAtTime(1 - t * t * (3 - 2 * t), context.currentTime, 0.12);
+    bed.air.frequency.setTargetAtTime(bed.night ? Math.max(2600, 8500 - distance * 42) : 12000,
+      context.currentTime, 0.12);
+  }
 }
 window.addEventListener('forest-listener', event => { listenerPose = event.detail; updateListener(); });
 
@@ -89,12 +97,16 @@ function seamlessLoop(engine, buffer, seconds) {
   }
   return output;
 }
-function startRecordedLoop(buffer, targetLevel, position, offset = 0, reference = 23) {
+function startRecordedLoop(buffer, targetLevel, position, offset = 0, reference = 23, night = false) {
   const source = context.createBufferSource(), gain = context.createGain(), stereo = spatialNode(position, reference, 0.85);
+  const fade = context.createGain(), air = context.createBiquadFilter(), shelf = context.createBiquadFilter();
+  air.type = 'lowpass'; air.frequency.value = night ? 6500 : 12000;
+  shelf.type = 'highshelf'; shelf.frequency.value = 2800; shelf.gain.value = night ? -4.5 : 0;
+  spatialBeds.add({ position, fade, air, night, fadeStart: night ? 55 : 80, fadeEnd: night ? 140 : 200 });
   source.buffer = buffer; source.loop = true;
   gain.gain.setValueAtTime(0, context.currentTime);
   gain.gain.linearRampToValueAtTime(Math.min(2.5, targetLevel / Math.max(0.015, rms(buffer))), context.currentTime + 2);
-  source.connect(gain).connect(stereo).connect(master);
+  source.connect(shelf).connect(air).connect(gain).connect(fade).connect(stereo).connect(master);
   source.start(0, offset % buffer.duration);
 }
 async function loadRecordings(engine) {
@@ -108,10 +120,11 @@ async function loadRecordings(engine) {
     }));
     if (context !== engine || engine.state === 'closed') return;
     naturalBuffers = { night: buffers[0], stream: buffers[1], owl: buffers[2] };
-    startRecordedLoop(naturalBuffers.night, 0.055, [-8, 1, -4], 7, 28);
-    startRecordedLoop(naturalBuffers.night, 0.055, [7, 0.8, 6], 31, 28);
+    startRecordedLoop(naturalBuffers.night, 0.055, [-8, 1, -4], 7, 28, true);
+    startRecordedLoop(naturalBuffers.night, 0.055, [7, 0.8, 6], 31, 28, true);
     startRecordedLoop(naturalBuffers.stream, 0.022, [-10, 0.65, 5]);
     startRecordedLoop(naturalBuffers.stream, 0.022, [9, 0.65, -5], 11);
+    updateListener();
     naturalReady = true;
     panel.dataset.recordings = 'ready';
   } catch {
@@ -219,6 +232,7 @@ function createAmbience() {
   const AudioEngine = window.AudioContext || window.webkitAudioContext;
   if (!AudioEngine) throw new Error('Web Audio is unavailable');
   context = new AudioEngine();
+  spatialBeds.clear();
   master = context.createGain();
   master.gain.value = 0;
   const compressor = context.createDynamicsCompressor();
@@ -311,6 +325,7 @@ window.addEventListener('pagehide', () => {
   enabled = false;
   if (context) context.close().catch(() => {});
   context = undefined;
+  spatialBeds.clear();
   updateControl();
 });
 updateControl();
