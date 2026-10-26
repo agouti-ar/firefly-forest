@@ -85,7 +85,7 @@ function updateListener() {
     const distance = Math.hypot(...bed.position.map((coordinate, i) => coordinate - position[i]));
     const t = Math.max(0, Math.min(1, (distance - bed.fadeStart) / (bed.fadeEnd - bed.fadeStart)));
     bed.fade.gain.setTargetAtTime(1 - t * t * (3 - 2 * t), context.currentTime, 0.12);
-    bed.air.frequency.setTargetAtTime(bed.night ? Math.max(2600, 8500 - distance * 42) : 12000,
+    bed.air.frequency.setTargetAtTime(bed.night ? Math.max(2200, 5000 - distance * 30) : 12000,
       context.currentTime, 0.12);
   }
 }
@@ -121,8 +121,8 @@ async function seamlessLoop(engine, buffer, seconds) {
 function startRecordedLoop(buffer, targetLevel, position, offset = 0, reference = 23, night = false) {
   const source = context.createBufferSource(), gain = context.createGain(), stereo = spatialNode(position, reference, night ? 0.7 : 1.1);
   const fade = context.createGain(), air = context.createBiquadFilter(), shelf = context.createBiquadFilter();
-  air.type = 'lowpass'; air.frequency.value = night ? 6500 : 12000;
-  shelf.type = 'highshelf'; shelf.frequency.value = 2800; shelf.gain.value = night ? -4.5 : 0;
+  air.type = 'lowpass'; air.frequency.value = night ? 4200 : 12000;
+  shelf.type = 'highshelf'; shelf.frequency.value = 2800; shelf.gain.value = night ? -9 : 0;
   spatialBeds.add({ position, fade, air, night, fadeStart: night ? 55 : 80, fadeEnd: night ? 140 : 200 });
   source.buffer = buffer; source.loop = true;
   gain.gain.setValueAtTime(0, context.currentTime);
@@ -141,8 +141,8 @@ async function loadRecordings(engine) {
     }));
     if (context !== engine || engine.state === 'closed') return;
     naturalBuffers = { night: buffers[0], stream: buffers[1], owl: buffers[2] };
-    startRecordedLoop(naturalBuffers.night, 0.055, [-8, 1, -4], 7, 28, true);
-    startRecordedLoop(naturalBuffers.night, 0.055, [7, 0.8, 6], 31, 28, true);
+    startRecordedLoop(naturalBuffers.night, 0.033, [-8, 1, -4], 7, 28, true);
+    startRecordedLoop(naturalBuffers.night, 0.033, [7, 0.8, 6], 31, 28, true);
     startRecordedLoop(naturalBuffers.stream, 0.022, [-10, 0.65, 5]);
     startRecordedLoop(naturalBuffers.stream, 0.022, [9, 0.65, -5], 11);
     updateListener();
