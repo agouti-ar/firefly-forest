@@ -13,19 +13,38 @@ volumeControl.max = '100';
 volumeControl.step = '1';
 volumeControl.className = 'night-audio-volume';
 volumeControl.setAttribute('aria-label', 'Ambient volume');
-let volume = 0.75;
+let volume = 0.40;
 try {
-  const saved = localStorage.getItem('firefly-forest-volume');
+  const saved = localStorage.getItem('firefly-forest-nature-volume-v2');
   if (saved !== null && Number.isFinite(Number(saved))) volume = Math.max(0, Math.min(1, Number(saved)));
 } catch { /* Storage can be disabled in private previews. */ }
 volumeControl.value = String(Math.round(volume * 100));
-panel.append(toggle, volumeControl);
+const musicControl = volumeControl.cloneNode();
+musicControl.setAttribute('aria-label', 'Music volume');
+let musicVolume = 0.65;
+try {
+  const saved = localStorage.getItem('firefly-forest-music-volume');
+  if (saved !== null && Number.isFinite(Number(saved))) musicVolume = Math.max(0, Math.min(1, Number(saved)));
+} catch { /* Optional storage. */ }
+musicControl.value = String(Math.round(musicVolume * 100));
+function labeledSlider(text, control) {
+  const label = document.createElement('label');
+  label.className = 'night-audio-channel';
+  const caption = document.createElement('span'); caption.textContent = text;
+  label.append(caption, control); return label;
+}
+panel.append(toggle, labeledSlider('Nature', volumeControl), labeledSlider('Music', musicControl));
+// Stream the soundtrack instead of decoding the entire song into mobile memory.
+let music = document.createElement('audio');
+music.src = new URL('./assets/audio/petals-beneath-the-moon.mp3', import.meta.url).href;
+music.preload = 'none'; music.loop = true;
+music.addEventListener('error', () => { panel.dataset.music = 'unavailable'; });
 document.body.append(panel);
 
 const speaker = '<path d="M11 5 6 9H3v6h3l5 4V5Z"/>';
 const waves = '<path d="M15 8a6 6 0 0 1 0 8m3-11a10 10 0 0 1 0 14"/>';
 const mute = '<path d="m16 9 5 6m0-6-5 6"/>';
-let context, master, splashBuffer, scheduler, enabled = false;
+let context, master, output, musicGain, splashBuffer, scheduler, enabled = false;
 let cricketTimes = [], frogTimes = [];
 let naturalReady = false, naturalBuffers = {}, nextOwl = 0;
 let listenerPose;
@@ -150,13 +169,16 @@ function owlCall(now) {
 function updateControl() {
   toggle.innerHTML = `<svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true">${speaker}${enabled ? waves : mute}</svg><span>Sound ${enabled ? 'on' : 'off'}</span>`;
   toggle.setAttribute('aria-pressed', String(enabled));
-  toggle.setAttribute('aria-label', enabled ? 'Turn ambient sound off' : 'Turn ambient sound on');
-  volumeControl.title = `Volume: ${Math.round(volume * 100)}%`;
+  toggle.setAttribute('aria-label', enabled ? 'Turn sound off' : 'Turn sound on');
+  musicControl.title = `Music: ${Math.round(musicVolume * 100)}%`;
+  volumeControl.title = `Nature: ${Math.round(volume * 100)}%`;
 }
 function applyVolume() {
   if (!context || !master) return;
   master.gain.cancelScheduledValues(context.currentTime);
-  master.gain.setTargetAtTime(enabled ? volume * 2 : 0, context.currentTime, 0.12);
+  master.gain.setTargetAtTime(volume * 2, context.currentTime, 0.12);
+  musicGain.gain.setTargetAtTime(musicVolume * 0.65, context.currentTime, 0.25);
+  output.gain.setTargetAtTime(enabled ? 1 : 0, context.currentTime, 0.12);
 }
 
 function voice(frequency, start, duration, amplitude, pan, endFrequency = frequency, position = [pan * 14, 1, 6]) {
@@ -243,7 +265,10 @@ function createAmbience() {
   compressor.ratio.value = 4;
   compressor.attack.value = 0.004;
   compressor.release.value = 0.25;
-  master.connect(compressor).connect(context.destination);
+  output = context.createGain(); output.gain.value = 0;
+  musicGain = context.createGain(); musicGain.gain.value = 0;
+  context.createMediaElementSource(music).connect(musicGain).connect(output);
+  master.connect(output).connect(compressor).connect(context.destination);
 
   const noiseBuffer = context.createBuffer(1, context.sampleRate * 4, context.sampleRate);
   const samples = noiseBuffer.getChannelData(0);
@@ -283,6 +308,10 @@ toggle.addEventListener('click', async () => {
     await context.resume();
     updateListener();
     enabled = !enabled;
+    if (enabled) {
+      try { await music.play(); panel.dataset.music = 'ready'; }
+      catch { panel.dataset.music = 'unavailable'; }
+    } else music.pause();
     applyVolume();
     clearInterval(scheduler);
     if (enabled) {
@@ -304,8 +333,35 @@ volumeControl.addEventListener('input', () => {
   volume = Number(volumeControl.value) / 100;
   applyVolume();
   updateControl();
-  try { localStorage.setItem('firefly-forest-volume', String(volume)); } catch { /* Optional. */ }
+  try { localStorage.setItem('firefly-forest-nature-volume-v2', String(volume)); } catch { /* Optional. */ }
 });
+musicControl.addEventListener('input', () => {
+  musicVolume = Number(musicControl.value) / 100;
+  applyVolume(); updateControl();
+  try { localStorage.setItem('firefly-forest-music-volume', String(musicVolume)); } catch { /* Optional. */ }
+});
+
+// Hiding controls never changes playback. Keyboard focus and active drags stay usable.
+let idleTimer, dragging = false, keyboardFocus = false;
+function revealControls() {
+  clearTimeout(idleTimer);
+  panel.classList.remove('is-idle'); panel.inert = false;
+  idleTimer = setTimeout(() => {
+    if (dragging || (keyboardFocus && panel.contains(document.activeElement))) return;
+    panel.classList.add('is-idle'); panel.inert = true;
+  }, 4000);
+}
+window.addEventListener('pointermove', revealControls, { passive: true });
+window.addEventListener('pointerdown', () => { keyboardFocus = false; revealControls(); }, { passive: true });
+panel.addEventListener('pointerdown', () => { dragging = true; });
+window.addEventListener('pointerup', () => { dragging = false; revealControls(); }, { passive: true });
+window.addEventListener('pointercancel', () => { dragging = false; revealControls(); }, { passive: true });
+window.addEventListener('keydown', () => { keyboardFocus = true; revealControls(); });
+window.addEventListener('wheel', revealControls, { passive: true });
+panel.addEventListener('focusout', revealControls);
+panel.addEventListener('input', revealControls);
+revealControls();
+
 window.addEventListener('pond-splash', event => splash(event.detail?.strength ?? 1,
   [event.detail?.x ?? 0, 0.65, event.detail?.z ?? 0]));
 window.addEventListener('pond-frog', event => {
@@ -318,16 +374,21 @@ window.addEventListener('pond-frog', event => {
 document.addEventListener('visibilitychange', async () => {
   if (!context || context.state === 'closed') return;
   try {
-    if (document.hidden) await context.suspend();
-    else if (enabled) await context.resume();
+    if (document.hidden) { music.pause(); await context.suspend(); }
+    else if (enabled) { revealControls(); await context.resume(); await music.play(); }
   } catch { /* A page transition may have closed the context. */ }
 });
 window.addEventListener('pagehide', () => {
   clearInterval(scheduler);
+  clearTimeout(idleTimer); music.pause();
   enabled = false;
   if (context) context.close().catch(() => {});
   context = undefined;
+  music = music.cloneNode();
+  music.addEventListener('error', () => { panel.dataset.music = 'unavailable'; });
   spatialBeds.clear();
   updateControl();
 });
 updateControl();
+
+window.addEventListener('pageshow', revealControls);

@@ -41,6 +41,10 @@
       border-radius: 24px;
       background: rgba(7, 19, 34, 0.82);
     }
+    .night-audio-controls { transition: opacity 300ms ease, transform 300ms ease; max-width: calc(100vw - 20px); }
+    .night-audio-controls.is-idle { opacity: 0; transform: translateY(8px); pointer-events: none; }
+    .night-audio-channel { display: flex; flex-direction: column; align-items: center; color: #c8dce6; font: 11px system-ui, sans-serif; }
+    @media (prefers-reduced-motion: reduce) { .night-audio-controls { transition: none; } }
     .night-audio-toggle {
       display: inline-flex;
       align-items: center;
@@ -1727,6 +1731,6 @@
     watchLocalSource();
   }
 </script>
-<script type="module" src="./ambient-audio.js?v=cinematic-audio-v2"></script>
+<script type="module" src="./ambient-audio.js?v=music-mix-v3"></script>
 </body>
 </html>

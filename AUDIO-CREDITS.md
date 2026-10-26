@@ -11,3 +11,7 @@ These recordings are distributed under **CC0 1.0 Universal**. Public MP3 preview
 License: https://creativecommons.org/publicdomain/zero/1.0/
 
 The two ambience recordings are trimmed and crossfaded into shorter seamless loops at runtime, with level adjustment. The owl recording plays occasionally. Procedural wind, synchronized fish splashes and a synthesized fallback are generated in `ambient-audio.js`.
+
+## Soundtrack
+
+Petals Beneath the Moon — supplied by the project author, generated from the first project music prompt. File: assets/audio/petals-beneath-the-moon.mp3. This track is separate from the CC0 field recordings listed above and is not covered by their licenses.

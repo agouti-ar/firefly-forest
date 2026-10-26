@@ -6,7 +6,7 @@ A procedural Three.js night diorama: a sakura grove on a floating asteroid, surr
 
 [Live scene](https://agouti-ar.github.io/firefly-forest/)
 
-[Optional soundtrack prompts](MUSIC-PROMPTS.md) — three music directions to explore; the current scene uses its nature ambience.
+[Soundtrack prompts](MUSIC-PROMPTS.md) — Petals Beneath the Moon, created from the first direction, now accompanies the nature ambience.
 
 ## Scene
 
@@ -90,3 +90,9 @@ Materials compile asynchronously and geometry outside the first view is uploaded
 - `README.md`: current scene and development instructions.
 - `preview_server.py`: local server with disabled browser caching.
 - `start-preview.cmd` / `start-preview.ps1`: terminal launchers.
+
+## Soundtrack and controls
+
+**Petals Beneath the Moon** accompanies the spatial nature ambience. Enable Sound, then mix Nature and Music independently. Controls fade after four seconds of inactivity and return on interaction, including touch. Audio starts only after a click or tap.
+
+Reusable settings: [cinematic camera and audio preset](docs/cinematic-camera-audio-preset.md).

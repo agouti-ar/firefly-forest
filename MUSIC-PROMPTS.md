@@ -1,6 +1,6 @@
 # Optional music directions
 
-These are prompts for generating original instrumental music; no music track is currently added to the scene. Choose one of the two suggested genres for each generation. My first choice for the island is prompt 1: organic ambient, leaving the existing nature ambience in the foreground.
+These are prompts for generating original instrumental music; the scene now includes the user-provided **Petals Beneath the Moon**, generated from prompt 1. Choose one of the two suggested genres for each generation. My first choice for the island is prompt 1: organic ambient, with music in the foreground and independently adjustable spatial nature underneath.
 
 ## 1. Floating Sakura
 
