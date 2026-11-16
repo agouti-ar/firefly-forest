@@ -2,6 +2,8 @@
 
 # Firefly Forest — Floating Sakura Island
 
+![Three.js](https://img.shields.io/badge/Three.js-000000?logo=threedotjs&logoColor=white) ![WebGL](https://img.shields.io/badge/WebGL-990000?logo=webgl&logoColor=white) ![GitHub%20Pages](https://img.shields.io/badge/GitHub%20Pages-222222?logo=githubpages&logoColor=white)
+
 A procedural Three.js night diorama: a sakura grove on a floating asteroid, surrounded by translucent water, stars, drifting mist and interactive fireflies.
 
 [Live scene](https://agouti-ar.github.io/firefly-forest/)
