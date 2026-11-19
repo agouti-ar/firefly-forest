@@ -185,7 +185,7 @@
       scene.add(moon.mesh);
       scene.fog = new THREE.FogExp2(0x101e36, 0.009);
 
-      // 2. Camera Setup (Patch 4: Isometric angle overlooking the diorama)
+      // 2. Camera setup overlooking the diorama
       const aspect = window.innerWidth / window.innerHeight;
       camera = new THREE.PerspectiveCamera(aspect < 1 ? 50 : 45, aspect, 0.2, 900);
       overviewRadius = Math.max(56, 29 / (Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)) * aspect));
@@ -209,7 +209,7 @@
       renderer.shadowMap.autoUpdate = !compactDevice;
       stage('renderer');
 
-      // 4. OrbitControls Setup (Patch 4: Centered isometric rotation)
+      // 4. OrbitControls setup around the diorama
       controls = new OrbitControls(camera, renderer.domElement);
       controls.target.set(0, 1, 0);
       controls.autoRotate = false; // The cinematic orbit below also varies elevation.
@@ -407,7 +407,7 @@
     }
 
     /**
-     * Patch 4: Floating Island Construction
+     * Floating island construction
      * Inverted rocky cone base, mossy green plateau top, glowing water ring, and sakura grove.
      */
     function createFloatingIsland() {
@@ -578,7 +578,7 @@
     }
 
     /**
-     * Patch 4: Sakura Tree Generator
+     * Sakura tree generation
      * Stylized organic trunk with curved inclination and blossoming pink canopies.
      */
     function createSakuraTree(scale = 1) {
